@@ -1,11 +1,13 @@
 "use client";
 
+import { useEffect, useRef } from "react";
 import type { Contradiction, ContradictionStatus } from "@/lib/types";
 import { FactCard } from "./FactCard";
 
 export function ContinuityPanel({
   contradictions,
   activeContradictionId,
+  focusNonce = 0,
   checking,
   checkPhase,
   checked,
@@ -14,6 +16,8 @@ export function ContinuityPanel({
 }: {
   contradictions: Contradiction[];
   activeContradictionId: string | null;
+  // Bumped by the parent on each editor-mark click to re-trigger the vibrate.
+  focusNonce?: number;
   checking: boolean;
   checkPhase: string | null;
   checked: boolean;
@@ -22,6 +26,23 @@ export function ContinuityPanel({
 }) {
   const unresolved = contradictions.filter((c) => c.status === "unresolved");
   const resolved = contradictions.filter((c) => c.status !== "unresolved");
+
+  const cardRefs = useRef(new Map<string, HTMLDivElement>());
+  const setCardRef = (id: string) => (el: HTMLDivElement | null) => {
+    if (el) cardRefs.current.set(id, el);
+    else cardRefs.current.delete(id);
+  };
+
+  // Scroll the clicked mark's card into view and give it a mini vibrate.
+  useEffect(() => {
+    if (!activeContradictionId) return;
+    const el = cardRefs.current.get(activeContradictionId);
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    el.classList.remove("card-shake");
+    void el.offsetWidth; // restart the animation when re-clicked
+    el.classList.add("card-shake");
+  }, [activeContradictionId, focusNonce]);
 
   return (
     <aside className="flex w-80 shrink-0 flex-col border-l border-border">
@@ -60,13 +81,14 @@ export function ContinuityPanel({
         ) : (
           <div className="divide-y divide-border-soft">
             {unresolved.map((c) => (
-              <FactCard
-                key={c.id}
-                contradiction={c}
-                isActive={c.id === activeContradictionId}
-                onJump={onJump}
-                onResolve={onResolve}
-              />
+              <div key={c.id} ref={setCardRef(c.id)}>
+                <FactCard
+                  contradiction={c}
+                  isActive={c.id === activeContradictionId}
+                  onJump={onJump}
+                  onResolve={onResolve}
+                />
+              </div>
             ))}
 
             {resolved.length > 0 && (
@@ -75,13 +97,14 @@ export function ContinuityPanel({
                   Resolved
                 </p>
                 {resolved.map((c) => (
-                  <FactCard
-                    key={c.id}
-                    contradiction={c}
-                    isActive={c.id === activeContradictionId}
-                    onJump={onJump}
-                    onResolve={onResolve}
-                  />
+                  <div key={c.id} ref={setCardRef(c.id)}>
+                    <FactCard
+                      contradiction={c}
+                      isActive={c.id === activeContradictionId}
+                      onJump={onJump}
+                      onResolve={onResolve}
+                    />
+                  </div>
                 ))}
               </div>
             )}

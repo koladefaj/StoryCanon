@@ -17,6 +17,9 @@
   --color-flag: #c2410c;
   --color-flag-soft: #fbeee8;
   --color-flag-strong: #9a3412;
+  /* Red box border for an open (flagged) contradiction */
+  --color-flag-red: #dc2626;
+  --color-flag-red-strong: #b91c1c;
 
   /* Kept / resolved — muted sage */
   --color-kept: #4a7c59;
@@ -37,6 +40,8 @@
   --color-flag: #e08856;
   --color-flag-soft: #33221a;
   --color-flag-strong: #edac8a;
+  --color-flag-red: #f87171;
+  --color-flag-red-strong: #fca5a5;
 
   --color-kept: #85ab8d;
   --color-kept-soft: #1e2a21;
@@ -186,7 +191,8 @@ html[data-theme="dark"] .theme-icon-sun {
 
 /*
  * Contradiction marks are inert until a continuity check confirms them.
- * `flagged` = open contradiction (spellchecker-style wavy line),
+ * `flagged` = open contradiction (red rectangular border around the text,
+ *   the words themselves stay their normal color),
  * `resolved` = decided, kept discoverable with a faint dotted line.
  */
 .manuscript mark.contradiction {
@@ -195,18 +201,85 @@ html[data-theme="dark"] .theme-icon-sun {
 }
 
 .manuscript mark.contradiction.flagged {
-  text-decoration: underline;
-  text-decoration-style: wavy;
-  text-decoration-color: var(--color-flag);
-  text-decoration-thickness: 1.5px;
-  text-underline-offset: 4px;
+  /* "Marching ants": the red border is drawn as four tiled gradient strips
+     (top, bottom, left, right) whose dash pattern is animated clockwise —
+     a real border can't move, background tiles can. 6px dash / 4px gap. */
+  --ant-color: var(--color-flag-red);
+  --ant-thickness: 1.5px;
+  border-radius: 3px;
+  padding: 2px 4px;
+  background-image:
+    linear-gradient(90deg, var(--ant-color) 0 6px, transparent 6px 10px),
+    linear-gradient(90deg, var(--ant-color) 0 6px, transparent 6px 10px),
+    linear-gradient(180deg, var(--ant-color) 0 6px, transparent 6px 10px),
+    linear-gradient(180deg, var(--ant-color) 0 6px, transparent 6px 10px);
+  background-size:
+    10px var(--ant-thickness),
+    10px var(--ant-thickness),
+    var(--ant-thickness) 10px,
+    var(--ant-thickness) 10px;
+  background-position: 0 0, 0 100%, 0 0, 100% 0;
+  background-repeat: repeat-x, repeat-x, repeat-y, repeat-y;
+  animation: contradiction-ants 0.8s linear infinite;
+  /* Each line fragment keeps its own box when the excerpt wraps. */
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  text-decoration: none;
   cursor: pointer;
-  transition: background-color 0.15s ease;
+}
+
+/* One dash period (10px) per cycle, each edge travelling clockwise:
+   top → right, right edge → down, bottom → left, left edge → up. */
+@keyframes contradiction-ants {
+  to {
+    background-position: 10px 0, -10px 100%, 0 -10px, 100% 10px;
+  }
 }
 
 .manuscript mark.contradiction.flagged:hover,
 .manuscript mark.contradiction.flagged.active {
-  background: var(--color-flag-soft);
+  --ant-color: var(--color-flag-red-strong);
+  --ant-thickness: 2px;
+  animation-duration: 0.5s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .manuscript mark.contradiction.flagged {
+    animation: none;
+    background-image: none;
+    border: var(--ant-thickness) solid var(--ant-color);
+    padding: 0.5px 3px;
+  }
+}
+
+/* "Mini vibrate" for the Continuity-panel card a clicked editor mark points at. */
+@keyframes card-shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  20% {
+    transform: translateX(-3px);
+  }
+  40% {
+    transform: translateX(3px);
+  }
+  60% {
+    transform: translateX(-2px);
+  }
+  80% {
+    transform: translateX(2px);
+  }
+}
+
+.card-shake {
+  animation: card-shake 0.4s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card-shake {
+    animation: none;
+  }
 }
 
 .manuscript mark.contradiction.resolved {
