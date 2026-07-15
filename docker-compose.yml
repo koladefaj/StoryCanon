@@ -21,5 +21,52 @@ services:
     volumes:
       - supermemory-data:/.supermemory
 
+  backend:
+    build: ./backend
+    container_name: continuity-backend
+    restart: unless-stopped
+    # Source-mounted for hot reload; the .venv stays inside the container.
+    command: uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    env_file:
+      - ./backend/.env
+    environment:
+      # Reach the sibling Supermemory service over the compose network, overriding
+      # the localhost value in backend/.env.
+      SUPERMEMORY_API_URL: http://supermemory:6767
+      FRONTEND_ORIGIN: http://localhost:3000
+      WATCHFILES_FORCE_POLLING: "true"
+      # NOTE: for the local-Ollama fallback, set EXTRACTOR_API_BASE in backend/.env
+      # to http://host.docker.internal:11434 (not localhost) so the container can
+      # reach Ollama on the host. Cloud providers (Groq/OpenAI) need no api_base.
+    ports:
+      - "8000:8000"
+    extra_hosts:
+      # Ollama runs on the host machine (localhost:11434 there).
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./backend:/app
+      - /app/.venv
+    depends_on:
+      - supermemory
+
+  frontend:
+    build: ./frontend
+    container_name: continuity-frontend
+    restart: unless-stopped
+    command: npm run dev -- -H 0.0.0.0
+    environment:
+      # NEXT_PUBLIC_* is read by the browser, so it must point at the host-published
+      # backend port, not the compose-internal hostname.
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+      WATCHPACK_POLLING: "true"
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
+    depends_on:
+      - backend
+
 volumes:
   supermemory-data:
