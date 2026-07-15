@@ -1,43 +1,162 @@
 "use client";
 
 import { useEditor, EditorContent } from "@tiptap/react";
+import type { Editor } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
 import CharacterCount from "@tiptap/extension-character-count";
-import { useEffect, useRef, useState } from "react";
-import type { Chapter, Contradiction, ContradictionStatus } from "@/lib/types";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { Chapter, Contradiction } from "@/lib/types";
 import { ContradictionMark } from "@/lib/contradiction-mark";
+import { paragraphCheck } from "@/lib/api";
 
-const POPOVER_WIDTH = 288;
+const TOOLTIP_WIDTH = 288;
+// Debounce before checking the paragraph the cursor is in (BUILD_PLAN §6).
+const LIVE_CHECK_DELAY = 1800;
+const MIN_PARAGRAPH_CHARS = 12;
 
-type PopoverState = { id: string; top: number; left: number };
+// --- ProseMirror helpers for the live loop --------------------------------
+
+/** Text of the top-level block the selection is in, plus the previous block's
+ *  text (used as pronoun-resolution context). */
+function currentParagraph(editor: Editor): { text: string; preceding: string } {
+  const { $from } = editor.state.selection;
+  // node(1) is the top-level block that actually contains the cursor — the
+  // authoritative "current paragraph" regardless of index bookkeeping.
+  const block = $from.depth >= 1 ? $from.node(1) : null;
+  const text = block?.textContent ?? "";
+  const doc = editor.state.doc;
+  // The preceding sibling supplies pronoun-resolution context.
+  const blockIndex = $from.index(0);
+  const preceding =
+    blockIndex > 0 && blockIndex <= doc.childCount
+      ? doc.child(blockIndex - 1).textContent
+      : "";
+  return { text, preceding };
+}
+
+/** Find the first occurrence of `needle` and return its ProseMirror range. */
+function findRange(
+  editor: Editor,
+  needle: string,
+): { from: number; to: number } | null {
+  if (!needle) return null;
+  let found: { from: number; to: number } | null = null;
+  editor.state.doc.descendants((node, pos) => {
+    if (found || !node.isText || !node.text) return !found;
+    const idx = node.text.indexOf(needle);
+    if (idx !== -1) found = { from: pos + idx, to: pos + idx + needle.length };
+    return !found;
+  });
+  return found;
+}
+
+/** Mark the excerpt without moving the caret (no setTextSelection). */
+function applyContradictionMark(editor: Editor, excerpt: string, id: string) {
+  const range = findRange(editor, excerpt);
+  if (!range) return;
+  const markType = editor.schema.marks.contradiction;
+  editor.view.dispatch(
+    editor.state.tr.addMark(range.from, range.to, markType.create({ contradictionId: id })),
+  );
+}
+
+type TooltipState = { id: string; top: number; left: number };
 
 export function ManuscriptEditor({
   chapter,
+  bookId,
+  chapterIndex,
   contradictions,
   activeContradictionId,
   onMarkClick,
   onWordCountChange,
-  onResolve,
+  onContentChange,
+  onContradictionsDetected,
   onRename,
   prevChapter,
   nextChapter,
   onSelectChapter,
 }: {
   chapter: Chapter;
+  bookId: string;
+  chapterIndex: number;
   contradictions: Contradiction[];
   activeContradictionId: string | null;
   onMarkClick: (id: string) => void;
   onWordCountChange: (wordCount: number) => void;
-  onResolve: (contradictionId: string, status: ContradictionStatus) => void;
+  onContentChange: (content: string) => void;
+  onContradictionsDetected: (detected: Contradiction[]) => void;
   onRename: (chapterId: string, title: string) => void;
   prevChapter?: Chapter;
   nextChapter?: Chapter;
   onSelectChapter: (id: string) => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const popoverRef = useRef<HTMLDivElement>(null);
-  const [popover, setPopover] = useState<PopoverState | null>(null);
+  const [tooltip, setTooltip] = useState<TooltipState | null>(null);
+
+  // --- live paragraph-check plumbing --------------------------------------
+  const editorRef = useRef<Editor | null>(null);
+  const liveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Every paragraph text already checked in this chapter — a single "last" string
+  // would re-check unchanged paragraph A after visiting B and returning to A.
+  // (Component remounts per chapter via `key`, so this is naturally per-chapter.)
+  const checkedParagraphs = useRef<Set<string>>(new Set());
+  // Mirror current props so the stable editor listener never reads stale values.
+  const liveProps = useRef({
+    bookId,
+    chapterId: chapter.id,
+    chapterIndex,
+    chapterTitle: chapter.title,
+    onContradictionsDetected,
+  });
+  useEffect(() => {
+    liveProps.current = {
+      bookId,
+      chapterId: chapter.id,
+      chapterIndex,
+      chapterTitle: chapter.title,
+      onContradictionsDetected,
+    };
+  });
+
+  const runParagraphCheck = useCallback(async () => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    const { text, preceding } = currentParagraph(editor);
+    const trimmed = text.trim();
+    if (trimmed.length < MIN_PARAGRAPH_CHARS) return;
+    if (checkedParagraphs.current.has(trimmed)) return;
+    checkedParagraphs.current.add(trimmed);
+
+    const p = liveProps.current;
+    try {
+      const result = await paragraphCheck(p.bookId, {
+        chapterId: p.chapterId,
+        chapterIndex: p.chapterIndex,
+        chapterTitle: p.chapterTitle,
+        paragraphText: trimmed,
+        precedingContext: preceding || undefined,
+      });
+      if (result.contradictions.length === 0) return;
+      for (const c of result.contradictions) {
+        try {
+          applyContradictionMark(editor, c.newFact.excerpt, c.id);
+        } catch {
+          // Editor torn down (check was flushed on chapter switch) — the panel
+          // entry below still lands; only the inline mark is skipped.
+        }
+      }
+      p.onContradictionsDetected(result.contradictions);
+    } catch {
+      // Backend offline / transient — stay silent, writing must not be blocked.
+    }
+  }, []);
+
+  const scheduleParagraphCheck = useCallback(() => {
+    if (liveTimer.current) clearTimeout(liveTimer.current);
+    liveTimer.current = setTimeout(runParagraphCheck, LIVE_CHECK_DELAY);
+  }, [runParagraphCheck]);
 
   const editor = useEditor({
     immediatelyRender: false,
@@ -57,19 +176,41 @@ export function ManuscriptEditor({
     },
     onUpdate: ({ editor }) => {
       onWordCountChange(editor.storage.characterCount.words());
+      onContentChange(editor.getHTML());
     },
   });
 
-  // Report the initial word count once the editor mounts.
+  // Report the initial word count once the editor mounts, wire the live-check
+  // listener, and expose the editor via a ref for the debounced checker.
   // (The parent remounts this component via `key` on chapter switch, so the
   // editor is always freshly created with the right chapter's content.)
   useEffect(() => {
     if (!editor) return;
+    editorRef.current = editor;
+    checkedParagraphs.current = new Set();
     onWordCountChange(editor.storage.characterCount.words());
+    const onEditorUpdate = () => scheduleParagraphCheck();
+    editor.on("update", onEditorUpdate);
+    return () => {
+      editor.off("update", onEditorUpdate);
+      if (liveTimer.current) {
+        clearTimeout(liveTimer.current);
+        // Flush, don't discard: cancelling here used to silently drop the
+        // pending check for the paragraph the author just left when switching
+        // chapters before the debounce fired. Fire-and-forget — never blocks
+        // the switch; results merge into the panel whenever they arrive.
+        try {
+          void runParagraphCheck();
+        } catch {
+          // Editor already torn down — nothing to flush.
+        }
+      }
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editor]);
 
-  // Open the inline popover when a confirmed contradiction mark is clicked.
+  // Clicking a confirmed mark hands off to the Continuity panel (the parent
+  // opens it if closed and vibrates the matching card) — resolution lives there.
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
@@ -79,40 +220,70 @@ export function ManuscriptEditor({
       if (!mark || !el.contains(mark)) return;
       const id = mark.getAttribute("data-contradiction-id");
       if (!id) return;
-      const known = contradictions.some((c) => c.id === id);
-      if (!known) return;
+      if (!contradictions.some((c) => c.id === id)) return;
       onMarkClick(id);
-      const markRect = mark.getBoundingClientRect();
-      const containerRect = el.getBoundingClientRect();
-      const left = Math.min(
-        Math.max(markRect.left - containerRect.left, 0),
-        Math.max(el.clientWidth - POPOVER_WIDTH - 8, 0),
-      );
-      setPopover({ id, top: markRect.bottom - containerRect.top + 8, left });
     };
     el.addEventListener("click", handler);
     return () => el.removeEventListener("click", handler);
   }, [onMarkClick, contradictions]);
 
-  // Dismiss the popover on outside click or Escape.
+  // Hovering a confirmed mark shows a read-only tooltip: what it conflicts
+  // with, where, and the judge's reason.
   useEffect(() => {
-    if (!popover) return;
-    const onMouseDown = (event: MouseEvent) => {
+    const el = containerRef.current;
+    if (!el) return;
+    let currentMark: HTMLElement | null = null;
+    const onOver = (event: MouseEvent) => {
       const target = event.target as HTMLElement;
-      if (popoverRef.current?.contains(target)) return;
-      if (target.closest("mark.contradiction")) return;
-      setPopover(null);
+      const mark = target.closest("mark.contradiction") as HTMLElement | null;
+      if (!mark || !el.contains(mark) || mark === currentMark) return;
+      const id = mark.getAttribute("data-contradiction-id");
+      if (!id || !contradictions.some((c) => c.id === id)) return;
+      currentMark = mark;
+      const markRect = mark.getBoundingClientRect();
+      const containerRect = el.getBoundingClientRect();
+      const left = Math.min(
+        Math.max(markRect.left - containerRect.left, 0),
+        Math.max(el.clientWidth - TOOLTIP_WIDTH - 8, 0),
+      );
+      setTooltip({ id, top: markRect.bottom - containerRect.top + 8, left });
     };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setPopover(null);
+    const onOut = (event: MouseEvent) => {
+      if (!currentMark) return;
+      const to = event.relatedTarget as Node | null;
+      if (to && currentMark.contains(to)) return;
+      currentMark = null;
+      setTooltip(null);
     };
-    document.addEventListener("mousedown", onMouseDown);
-    document.addEventListener("keydown", onKeyDown);
+    el.addEventListener("mouseover", onOver);
+    el.addEventListener("mouseout", onOut);
     return () => {
-      document.removeEventListener("mousedown", onMouseDown);
-      document.removeEventListener("keydown", onKeyDown);
+      el.removeEventListener("mouseover", onOver);
+      el.removeEventListener("mouseout", onOut);
     };
-  }, [popover]);
+  }, [contradictions]);
+
+  // Ensure every known contradiction in THIS chapter has its inline mark —
+  // full-book scan results and flushed checks arrive without marks applied.
+  useEffect(() => {
+    const editor = editorRef.current;
+    const el = containerRef.current;
+    if (!editor || !el) return;
+    for (const c of contradictions) {
+      if (c.newFact.chapterId !== chapter.id) continue;
+      if (
+        el.querySelector(
+          `mark.contradiction[data-contradiction-id="${c.id}"]`,
+        )
+      )
+        continue;
+      try {
+        applyContradictionMark(editor, c.newFact.excerpt, c.id);
+      } catch {
+        // Excerpt no longer present in the edited text — nothing to mark.
+      }
+    }
+  }, [contradictions, chapter.id]);
 
   // Marks stay inert until a check confirms them: flagged while unresolved,
   // dotted once decided.
@@ -140,8 +311,8 @@ export function ManuscriptEditor({
     });
   }, [activeContradictionId, chapter.id]);
 
-  const popoverContradiction = popover
-    ? contradictions.find((c) => c.id === popover.id)
+  const tooltipContradiction = tooltip
+    ? contradictions.find((c) => c.id === tooltip.id)
     : undefined;
 
   return (
@@ -195,63 +366,34 @@ export function ManuscriptEditor({
         </div>
       </div>
 
-      {popover && popoverContradiction && (
+      {tooltip && tooltipContradiction && (
         <div
-          ref={popoverRef}
-          style={{ top: popover.top, left: popover.left, width: POPOVER_WIDTH }}
-          className="animate-fade-in absolute z-10 rounded-xl border border-border bg-paper-raised p-3 shadow-lg shadow-black/5"
+          style={{ top: tooltip.top, left: tooltip.left, width: TOOLTIP_WIDTH }}
+          className="animate-fade-in pointer-events-none absolute z-10 rounded-xl border border-border bg-paper-raised p-3 shadow-lg shadow-black/5"
         >
           <div className="flex items-baseline justify-between gap-2">
             <p className="text-xs font-medium text-ink">
-              {popoverContradiction.entity}
+              {tooltipContradiction.entity}
             </p>
             <p className="shrink-0 text-[11px] text-ink-faint">
-              vs. {popoverContradiction.oldFact.chapterTitle}
+              vs. {tooltipContradiction.oldFact.chapterTitle}
             </p>
           </div>
           <p className="mt-2 font-serif text-[13px] italic leading-snug text-ink-soft">
-            &ldquo;{popoverContradiction.oldFact.excerpt}&rdquo;
+            &ldquo;{tooltipContradiction.oldFact.excerpt}&rdquo;
           </p>
-
-          {popoverContradiction.status === "unresolved" ? (
-            <div className="mt-3 flex gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  onResolve(popoverContradiction.id, "kept-old");
-                  setPopover(null);
-                }}
-                className="flex-1 cursor-pointer rounded-md border border-border px-2 py-1.5 text-xs font-medium text-ink-soft transition-colors hover:bg-ink/5 hover:text-ink"
-              >
-                Keep original
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  onResolve(popoverContradiction.id, "kept-new");
-                  setPopover(null);
-                }}
-                className="flex-1 cursor-pointer rounded-md bg-ink px-2 py-1.5 text-xs font-medium text-paper transition-colors hover:bg-ink/85"
-              >
-                Make canon
-              </button>
-            </div>
-          ) : (
-            <div className="mt-3 flex items-center justify-between">
-              <span className="text-xs text-kept">
-                {popoverContradiction.status === "kept-old"
-                  ? "Kept original"
-                  : "Made canon"}
-              </span>
-              <button
-                type="button"
-                onClick={() => onResolve(popoverContradiction.id, "unresolved")}
-                className="cursor-pointer text-xs text-ink-faint transition-colors hover:text-ink"
-              >
-                Undo
-              </button>
-            </div>
+          {tooltipContradiction.reason && (
+            <p className="mt-2 text-xs leading-relaxed text-ink-soft">
+              {tooltipContradiction.reason}
+            </p>
           )}
+          <p className="mt-2 text-[11px] text-ink-faint">
+            {tooltipContradiction.status === "unresolved"
+              ? "Click to review in the Continuity panel"
+              : tooltipContradiction.status === "kept-old"
+                ? "Resolved — kept the original"
+                : "Resolved — made canon"}
+          </p>
         </div>
       )}
     </div>
