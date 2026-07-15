@@ -1,0 +1,219 @@
+@import "tailwindcss";
+
+:root {
+  /* Surfaces — warm near-white neutrals */
+  --color-paper: #fdfdfc;
+  --color-paper-raised: #ffffff;
+  --color-paper-sunken: #f5f5f4;
+  --color-border: #e7e5e4;
+  --color-border-soft: #f0efee;
+
+  /* Text */
+  --color-ink: #1c1917;
+  --color-ink-soft: #57534e;
+  --color-ink-faint: #a8a29e;
+
+  /* Contradiction — muted terracotta */
+  --color-flag: #c2410c;
+  --color-flag-soft: #fbeee8;
+  --color-flag-strong: #9a3412;
+
+  /* Kept / resolved — muted sage */
+  --color-kept: #4a7c59;
+  --color-kept-soft: #eaf1ec;
+}
+
+:root[data-theme="dark"] {
+  --color-paper: #171615;
+  --color-paper-raised: #1e1d1b;
+  --color-paper-sunken: #121110;
+  --color-border: #2b2927;
+  --color-border-soft: #232120;
+
+  --color-ink: #e9e7e4;
+  --color-ink-soft: #a49f99;
+  --color-ink-faint: #6e6963;
+
+  --color-flag: #e08856;
+  --color-flag-soft: #33221a;
+  --color-flag-strong: #edac8a;
+
+  --color-kept: #85ab8d;
+  --color-kept-soft: #1e2a21;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --color-paper: #171615;
+    --color-paper-raised: #1e1d1b;
+    --color-paper-sunken: #121110;
+    --color-border: #2b2927;
+    --color-border-soft: #232120;
+
+    --color-ink: #e9e7e4;
+    --color-ink-soft: #a49f99;
+    --color-ink-faint: #6e6963;
+
+    --color-flag: #e08856;
+    --color-flag-soft: #33221a;
+    --color-flag-strong: #edac8a;
+
+    --color-kept: #85ab8d;
+    --color-kept-soft: #1e2a21;
+  }
+}
+
+@theme inline {
+  --color-paper: var(--color-paper);
+  --color-paper-raised: var(--color-paper-raised);
+  --color-paper-sunken: var(--color-paper-sunken);
+  --color-border: var(--color-border);
+  --color-border-soft: var(--color-border-soft);
+
+  --color-ink: var(--color-ink);
+  --color-ink-soft: var(--color-ink-soft);
+  --color-ink-faint: var(--color-ink-faint);
+
+  --color-flag: var(--color-flag);
+  --color-flag-soft: var(--color-flag-soft);
+  --color-flag-strong: var(--color-flag-strong);
+
+  --color-kept: var(--color-kept);
+  --color-kept-soft: var(--color-kept-soft);
+
+  --font-sans: var(--font-geist), ui-sans-serif, system-ui, sans-serif;
+  --font-serif: var(--font-source-serif), Georgia, serif;
+
+  --animate-fade-in: fade-in 0.25s ease-out;
+
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+      transform: translateY(2px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+}
+
+* {
+  border-color: var(--color-border);
+}
+
+html {
+  color-scheme: light;
+}
+html[data-theme="dark"] {
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme="light"]) {
+    color-scheme: dark;
+  }
+}
+
+body {
+  background: var(--color-paper);
+  color: var(--color-ink);
+}
+
+/* Theme toggle icons — visibility mirrors the active theme so the
+   component itself can stay stateless (no hydration mismatch). */
+.theme-icon-sun {
+  display: none;
+}
+html[data-theme="dark"] .theme-icon-moon {
+  display: none;
+}
+html[data-theme="dark"] .theme-icon-sun {
+  display: block;
+}
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme="light"]) .theme-icon-moon {
+    display: none;
+  }
+  html:not([data-theme="light"]) .theme-icon-sun {
+    display: block;
+  }
+}
+
+::selection {
+  background: var(--color-ink);
+  color: var(--color-paper);
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-ink-faint);
+}
+
+/* --- Manuscript editor (TipTap ProseMirror) --- */
+.manuscript {
+  font-family: var(--font-serif);
+  color: var(--color-ink);
+  font-size: 1.125rem;
+  line-height: 1.9;
+}
+
+.manuscript p {
+  margin: 0 0 1.1em;
+}
+
+.manuscript p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  pointer-events: none;
+  color: var(--color-ink-faint);
+  font-style: italic;
+}
+
+.manuscript:focus {
+  outline: none;
+}
+
+/*
+ * Contradiction marks are inert until a continuity check confirms them.
+ * `flagged` = open contradiction (spellchecker-style wavy line),
+ * `resolved` = decided, kept discoverable with a faint dotted line.
+ */
+.manuscript mark.contradiction {
+  background: transparent;
+  color: inherit;
+}
+
+.manuscript mark.contradiction.flagged {
+  text-decoration: underline;
+  text-decoration-style: wavy;
+  text-decoration-color: var(--color-flag);
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 4px;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.manuscript mark.contradiction.flagged:hover,
+.manuscript mark.contradiction.flagged.active {
+  background: var(--color-flag-soft);
+}
+
+.manuscript mark.contradiction.resolved {
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-decoration-color: var(--color-ink-faint);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 4px;
+  cursor: pointer;
+}
