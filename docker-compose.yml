@@ -1,0 +1,25 @@
+services:
+  supermemory:
+    build: .
+    container_name: supermemory-instance
+    restart: unless-stopped
+    ports:
+      - "6767:6767"
+    environment:
+      # Defaults to local Ollama — override in a root `.env` (git-ignored) to
+      # switch to a cloud provider, e.g.:
+      #   OPENAI_API_KEY=sk-...
+      #   OPENAI_BASE_URL=
+      #   OPENAI_MODEL=gpt-4o-mini
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-ollama}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-http://host.docker.internal:11434/v1}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gemma3:4b}
+    extra_hosts:
+      # host.docker.internal is automatic on Docker Desktop; this line makes
+      # it also resolve on native Linux Docker engines.
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - supermemory-data:/.supermemory
+
+volumes:
+  supermemory-data:
