@@ -3,7 +3,23 @@ name = "supermemory-hackaton"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.14"
+requires-python = ">=3.13,<3.14"
 dependencies = [
     "supermemory>=3.50.0",
+    "fastapi>=0.115",
+    "uvicorn>=0.34",
+    "litellm>=1.92",
+    "pydantic-settings>=2.7",
+    "httpx>=0.28",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["."]
