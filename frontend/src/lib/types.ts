@@ -26,4 +26,14 @@ export type Contradiction = {
   oldFact: FactRef;
   newFact: FactRef;
   status: ContradictionStatus;
+  // Present when the contradiction came from the backend (live check / full scan);
+  // absent for purely mock data. Used to drive `resolve`.
+  oldMemoryId?: string;
+  newFactContent?: string;
+  pendingId?: string;
+  kind?: "fact" | "claim";
+  attribute?: string;
+  chapterIndex?: number;
+  // The judge's short explanation of the conflict — shown on hover in the editor.
+  reason?: string;
 };
