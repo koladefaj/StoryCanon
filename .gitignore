@@ -14,3 +14,6 @@ wheels/
 .env.*
 supermemory.env
 !*.env.example
+
+# Internal planning doc — not for the public repo
+BUILD_PLAN.md
