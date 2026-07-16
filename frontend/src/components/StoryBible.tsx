@@ -1,0 +1,179 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import { getCanon, forgetMemory, type CanonEntry } from "@/lib/api";
+
+/** Canon grouped by entity, with version history and forget-with-reason. */
+export function StoryBible({
+  bookId,
+  refreshKey = 0,
+}: {
+  bookId: string;
+  refreshKey?: number;
+}) {
+  const [entries, setEntries] = useState<CanonEntry[] | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [confirmId, setConfirmId] = useState<string | null>(null);
+  const [reason, setReason] = useState("");
+
+  // Bumped to re-fetch (e.g. reconciling after a failed forget).
+  const [reloadNonce, setReloadNonce] = useState(0);
+
+  // Parent remounts this component per book via `key`, so `entries === null`
+  // is the loading state and no synchronous reset is needed here.
+  useEffect(() => {
+    let cancelled = false;
+    getCanon(bookId)
+      .then((res) => {
+        if (cancelled) return;
+        setEntries(res.entries);
+        setFailed(false);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setFailed(true);
+        setEntries([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [bookId, reloadNonce, refreshKey]);
+
+  const groups = useMemo(() => {
+    const byEntity = new Map<string, CanonEntry[]>();
+    for (const e of entries ?? []) {
+      const list = byEntity.get(e.entity) ?? [];
+      list.push(e);
+      byEntity.set(e.entity, list);
+    }
+    return Array.from(byEntity.entries());
+  }, [entries]);
+
+  const handleForget = (id: string) => {
+    const r = reason.trim() || "Removed from canon by the author";
+    setConfirmId(null);
+    setReason("");
+    // Optimistic removal; reload to reconcile if the call fails.
+    setEntries((prev) => (prev ?? []).filter((e) => e.id !== id));
+    forgetMemory(bookId, id, r).catch(() => setReloadNonce((n) => n + 1));
+  };
+
+  if (entries === null) {
+    return (
+      <p className="mt-16 animate-pulse text-center text-[13px] text-ink-faint">
+        Reading the Story Bible…
+      </p>
+    );
+  }
+
+  if (entries.length === 0) {
+    return (
+      <div className="mt-16 px-6 text-center">
+        <p className="text-[13px] font-medium text-ink-soft">
+          {failed ? "Couldn’t reach the backend" : "No canon yet"}
+        </p>
+        <p className="mt-1.5 text-[13px] leading-relaxed text-ink-faint">
+          {failed
+            ? "The Story Bible loads from Supermemory — check that the backend is running."
+            : "Facts are extracted into canon as you write. Start a chapter and they’ll appear here."}
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="divide-y divide-border-soft">
+      {groups.map(([entity, list]) => (
+        <div key={entity} className="px-5 py-4">
+          <p className="text-[13px] font-medium text-ink">{entity}</p>
+          <div className="mt-2 space-y-3">
+            {list.map((e) => (
+              <div key={e.id} className="group/entry">
+                <div className="flex items-start gap-2">
+                  <div className="min-w-0 flex-1">
+                    <p className="font-serif text-[13px] italic leading-snug text-ink-soft">
+                      {e.content}
+                    </p>
+                    <p className="mt-0.5 text-[11px] text-ink-faint">
+                      {e.attribute && <span>{e.attribute} · </span>}
+                      {e.chapterTitle || "Unknown chapter"}
+                      {(e.version ?? 1) > 1 && (
+                        <span className="ml-1 rounded bg-kept-soft px-1 font-medium text-kept">
+                          v{e.version}
+                        </span>
+                      )}
+                    </p>
+                    {e.history.length > 0 && (
+                      <div className="mt-1 border-l-2 border-border-soft pl-2">
+                        {e.history.map((h, i) => (
+                          <p
+                            key={i}
+                            className="text-[11px] leading-snug text-ink-faint line-through"
+                          >
+                            {h.content}
+                          </p>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setConfirmId(confirmId === e.id ? null : e.id)
+                    }
+                    aria-label="Remove from canon"
+                    title="Remove from canon"
+                    className="shrink-0 cursor-pointer rounded p-0.5 text-ink-faint opacity-0 transition-opacity hover:text-flag group-hover/entry:opacity-100"
+                  >
+                    <svg
+                      width="12"
+                      height="12"
+                      viewBox="0 0 12 12"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.25"
+                      strokeLinecap="round"
+                    >
+                      <path d="M2.5 2.5l7 7M9.5 2.5l-7 7" />
+                    </svg>
+                  </button>
+                </div>
+                {confirmId === e.id && (
+                  <div className="animate-fade-in mt-2 rounded-md bg-paper-sunken p-2">
+                    <input
+                      value={reason}
+                      onChange={(ev) => setReason(ev.target.value)}
+                      placeholder="Why is this leaving canon? (optional)"
+                      className="w-full rounded bg-paper px-2 py-1 text-[12px] text-ink outline-none placeholder:text-ink-faint"
+                      autoFocus
+                      onKeyDown={(ev) => {
+                        if (ev.key === "Enter") handleForget(e.id);
+                        if (ev.key === "Escape") setConfirmId(null);
+                      }}
+                    />
+                    <div className="mt-1.5 flex justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setConfirmId(null)}
+                        className="cursor-pointer text-[11px] text-ink-faint hover:text-ink"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleForget(e.id)}
+                        className="cursor-pointer rounded bg-flag px-2 py-0.5 text-[11px] font-medium text-paper hover:opacity-85"
+                      >
+                        Forget
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}

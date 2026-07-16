@@ -8,10 +8,15 @@ import { ContinuityPanel } from "./ContinuityPanel";
 import type { Book, Chapter, Contradiction, ContradictionStatus } from "@/lib/types";
 import {
   continuityCheck,
+  continuityCheckStream,
+  deleteBook,
+  deleteChapter,
   getBooks,
+  getContradictions,
   resolveContradiction,
   saveBook,
   saveChapter,
+  saveContradictions,
 } from "@/lib/api";
 
 const RESULT_STAGGER = 240;
@@ -60,6 +65,10 @@ export function Workspace() {
   // Bumped on every mark click so the panel re-vibrates the card even when the
   // same contradiction is clicked twice.
   const [panelFocusNonce, setPanelFocusNonce] = useState(0);
+  // Bumped whenever canon changes (facts stored/updated/forgotten) so the
+  // Story Bible re-fetches instead of showing a stale snapshot.
+  const [canonNonce, setCanonNonce] = useState(0);
+  const bumpCanon = useCallback(() => setCanonNonce((n) => n + 1), []);
 
   // A mark click hands off to the Continuity panel: open it if closed, then
   // vibrate the matching card.
@@ -72,6 +81,11 @@ export function Workspace() {
   const saveTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const chapterSaveTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const bookSaveTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const contradictionsSaveTimeout = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+  // Last-persisted contradictions per book (serialized), to skip redundant saves.
+  const savedContradictions = useRef<Record<string, string>>({});
 
   // Debounced durable autosave of a whole chapter to Supermemory documents.
   const scheduleChapterSave = useCallback(
@@ -161,14 +175,35 @@ export function Workspace() {
   const handleCheckContinuity = useCallback(async () => {
     const bookId = activeBookId;
     if (!bookId || checking) return;
+    const book = books.find((b) => b.id === bookId);
     setChecking(true);
     setActiveContradictionId(null);
     setShowPanel(true);
-    setCheckPhase("Scanning manuscript against canon…");
     try {
-      const res = await continuityCheck(bookId);
+      // The scan reads stored chapters, so push the current manuscript first —
+      // otherwise a book that was only loaded (never edited) has nothing to scan.
+      if (book) {
+        setCheckPhase("Saving chapters…");
+        await Promise.all(
+          book.chapters.map((ch) =>
+            saveChapter(bookId, ch.id, {
+              title: ch.title,
+              content: ch.content,
+              index: ch.index,
+            }),
+          ),
+        );
+      }
+      setCheckPhase("Scanning manuscript against canon…");
+      // SSE first (real per-chapter progress); plain POST as a fallback.
+      const contradictions = await continuityCheckStream(
+        bookId,
+        setCheckPhase,
+      ).catch(async () => (await continuityCheck(bookId)).contradictions);
+      const res = { contradictions };
       setChecking(false);
       setCheckPhase(null);
+      bumpCanon(); // the scan built/updated canon
       // The scan is the fresh source of open conflicts; prior decisions stand.
       setResultsByBook((prev) => ({
         ...prev,
@@ -189,7 +224,7 @@ export function Workspace() {
       setChecking(false);
       setCheckPhase(null);
     }
-  }, [activeBookId, checking]);
+  }, [activeBookId, checking, books, bumpCanon]);
 
   const handleJump = useCallback(
     (contradictionId: string, chapterId: string) => {
@@ -253,12 +288,14 @@ export function Workspace() {
           chapterId: target.newFact.chapterId,
           chapterIndex: target.chapterIndex,
           chapterTitle: target.newFact.chapterTitle,
-        }).catch(() => {
-          // Leave the optimistic UI state; a retry path is a later concern.
-        });
+        })
+          .then(() => bumpCanon()) // version-bump changed canon
+          .catch(() => {
+            // Leave the optimistic UI state; a retry path is a later concern.
+          });
       }
     },
-    [activeBookId, resultsByBook],
+    [activeBookId, resultsByBook, bumpCanon],
   );
 
   const handleSelectChapter = useCallback((id: string) => {
@@ -334,6 +371,49 @@ export function Workspace() {
     [],
   );
 
+  const handleDeleteChapter = useCallback(
+    (id: string) => {
+      const bookId = activeBookId;
+      if (chapters.length <= 1) return; // keep at least one chapter
+      const remaining = chapters.filter((c) => c.id !== id);
+      updateActiveBookChapters((prev) => prev.filter((c) => c.id !== id));
+      if (activeChapterId === id) {
+        setActiveChapterId(remaining[0].id);
+        setActiveContradictionId(null);
+      }
+      // Drop any contradictions that referenced the deleted chapter.
+      setResultsByBook((prev) => ({
+        ...prev,
+        [bookId]: (prev[bookId] ?? []).filter(
+          (c) => c.newFact.chapterId !== id && c.oldFact.chapterId !== id,
+        ),
+      }));
+      deleteChapter(bookId, id).catch(() => {});
+    },
+    [activeBookId, activeChapterId, chapters, updateActiveBookChapters],
+  );
+
+  const handleDeleteBook = useCallback(
+    (id: string) => {
+      if (books.length <= 1) return; // keep at least one book
+      const remaining = books.filter((b) => b.id !== id);
+      setBooks(remaining);
+      setResultsByBook((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+      if (activeBookId === id) {
+        const next = remaining[0];
+        setActiveBookId(next.id);
+        setActiveChapterId(next.chapters[0]?.id ?? "");
+        setActiveContradictionId(null);
+      }
+      deleteBook(id).catch(() => {});
+    },
+    [books, activeBookId],
+  );
+
   // Load the whole library from Supermemory on mount. An empty registry (or an
   // unreachable backend) starts a fresh book — persisted when the backend is up.
   useEffect(() => {
@@ -383,6 +463,44 @@ export function Workspace() {
     };
   }, []);
 
+  // Restore a book's saved contradictions when it becomes active, so refreshing
+  // keeps the panel + inline highlights without re-running the LLM.
+  useEffect(() => {
+    if (!activeBookId) return;
+    let cancelled = false;
+    getContradictions(activeBookId)
+      .then((res) => {
+        if (cancelled || res.contradictions.length === 0) return;
+        savedContradictions.current[activeBookId] = JSON.stringify(
+          res.contradictions,
+        );
+        setResultsByBook((prev) => {
+          // Don't clobber live detections already present for this book.
+          if ((prev[activeBookId]?.length ?? 0) > 0) return prev;
+          return { ...prev, [activeBookId]: res.contradictions };
+        });
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [activeBookId]);
+
+  // Persist contradictions (debounced) whenever they change for the active book.
+  useEffect(() => {
+    if (!activeBookId) return;
+    const list = resultsByBook[activeBookId];
+    if (list === undefined) return;
+    const serial = JSON.stringify(list);
+    if (savedContradictions.current[activeBookId] === serial) return;
+    if (contradictionsSaveTimeout.current)
+      clearTimeout(contradictionsSaveTimeout.current);
+    contradictionsSaveTimeout.current = setTimeout(() => {
+      savedContradictions.current[activeBookId] = serial;
+      saveContradictions(activeBookId, list).catch(() => {});
+    }, 1200);
+  }, [resultsByBook, activeBookId]);
+
   const unresolvedCount = contradictions.filter(
     (c) => c.status === "unresolved",
   ).length;
@@ -405,6 +523,7 @@ export function Workspace() {
         onSelectBook={handleSelectBook}
         onAddBook={handleAddBook}
         onRenameBook={handleRenameBook}
+        onDeleteBook={handleDeleteBook}
         chapterTitle={activeChapter.title}
         saveState={saveState}
         unresolvedCount={unresolvedCount}
@@ -420,6 +539,7 @@ export function Workspace() {
             activeChapterId={activeChapter.id}
             onSelectChapter={handleSelectChapter}
             onAddChapter={handleAddChapter}
+            onDeleteChapter={handleDeleteChapter}
             contradictions={contradictions}
           />
         )}
@@ -435,6 +555,7 @@ export function Workspace() {
             onWordCountChange={handleWordCountChange}
             onContentChange={handleContentChange}
             onContradictionsDetected={handleContradictionsDetected}
+            onCanonChanged={bumpCanon}
             onRename={handleRenameChapter}
             prevChapter={prevChapter}
             nextChapter={nextChapter}
@@ -443,6 +564,8 @@ export function Workspace() {
         </main>
         {showPanel && (
           <ContinuityPanel
+            bookId={activeBook.id}
+            canonRefreshKey={canonNonce}
             contradictions={contradictions}
             activeContradictionId={activeContradictionId}
             focusNonce={panelFocusNonce}

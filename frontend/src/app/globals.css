@@ -24,18 +24,21 @@
   /* Kept / resolved — muted sage */
   --color-kept: #4a7c59;
   --color-kept-soft: #eaf1ec;
+
+  /* Relationship-graph entity nodes — slate blue (not the contradiction orange) */
+  --color-node: #4b6ea8;
 }
 
 :root[data-theme="dark"] {
-  --color-paper: #171615;
-  --color-paper-raised: #1e1d1b;
-  --color-paper-sunken: #121110;
-  --color-border: #2b2927;
-  --color-border-soft: #232120;
+  --color-paper: #101318;
+  --color-paper-raised: #181c23;
+  --color-paper-sunken: #0b0e12;
+  --color-border: #262b34;
+  --color-border-soft: #1d222a;
 
-  --color-ink: #e9e7e4;
-  --color-ink-soft: #a49f99;
-  --color-ink-faint: #6e6963;
+  --color-ink: #e7e9ee;
+  --color-ink-soft: #9aa0ac;
+  --color-ink-faint: #676d78;
 
   --color-flag: #e08856;
   --color-flag-soft: #33221a;
@@ -45,26 +48,32 @@
 
   --color-kept: #85ab8d;
   --color-kept-soft: #1e2a21;
+
+  --color-node: #7aa0cf;
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --color-paper: #171615;
-    --color-paper-raised: #1e1d1b;
-    --color-paper-sunken: #121110;
-    --color-border: #2b2927;
-    --color-border-soft: #232120;
+    --color-paper: #101318;
+    --color-paper-raised: #181c23;
+    --color-paper-sunken: #0b0e12;
+    --color-border: #262b34;
+    --color-border-soft: #1d222a;
 
-    --color-ink: #e9e7e4;
-    --color-ink-soft: #a49f99;
-    --color-ink-faint: #6e6963;
+    --color-ink: #e7e9ee;
+    --color-ink-soft: #9aa0ac;
+    --color-ink-faint: #676d78;
 
     --color-flag: #e08856;
     --color-flag-soft: #33221a;
     --color-flag-strong: #edac8a;
+    --color-flag-red: #f87171;
+    --color-flag-red-strong: #fca5a5;
 
     --color-kept: #85ab8d;
     --color-kept-soft: #1e2a21;
+
+    --color-node: #7aa0cf;
   }
 }
 
@@ -82,9 +91,13 @@
   --color-flag: var(--color-flag);
   --color-flag-soft: var(--color-flag-soft);
   --color-flag-strong: var(--color-flag-strong);
+  --color-flag-red: var(--color-flag-red);
+  --color-flag-red-strong: var(--color-flag-red-strong);
 
   --color-kept: var(--color-kept);
   --color-kept-soft: var(--color-kept-soft);
+
+  --color-node: var(--color-node);
 
   --font-sans: var(--font-geist), ui-sans-serif, system-ui, sans-serif;
   --font-serif: var(--font-source-serif), Georgia, serif;

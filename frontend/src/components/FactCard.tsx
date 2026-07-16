@@ -48,7 +48,7 @@ export function FactCard({
   onJump: (contradictionId: string, chapterId: string) => void;
   onResolve: (contradictionId: string, status: ContradictionStatus) => void;
 }) {
-  const { id, entity, oldFact, newFact, status } = contradiction;
+  const { id, entity, oldFact, newFact, status, newFactContent } = contradiction;
   const resolved = status !== "unresolved";
 
   return (
@@ -94,6 +94,21 @@ export function FactCard({
           onJump={() => onJump(id, newFact.chapterId)}
         />
       </div>
+
+      {status === "kept-new" && (
+        <div className="mt-2.5 rounded-md bg-paper-sunken px-2.5 py-2">
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-ink-faint">
+            Version chain
+          </p>
+          <p className="mt-1 text-[12px] leading-snug text-ink-faint">
+            <span className="line-through">&ldquo;{oldFact.excerpt}&rdquo;</span>
+            <span> — {oldFact.chapterTitle} · superseded</span>
+          </p>
+          <p className="mt-0.5 text-[12px] leading-snug text-kept">
+            &ldquo;{newFactContent ?? newFact.excerpt}&rdquo; · current
+          </p>
+        </div>
+      )}
 
       <div className="mt-3">
         {!resolved ? (

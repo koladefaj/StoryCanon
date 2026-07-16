@@ -73,6 +73,7 @@ export function ManuscriptEditor({
   onWordCountChange,
   onContentChange,
   onContradictionsDetected,
+  onCanonChanged,
   onRename,
   prevChapter,
   nextChapter,
@@ -87,6 +88,7 @@ export function ManuscriptEditor({
   onWordCountChange: (wordCount: number) => void;
   onContentChange: (content: string) => void;
   onContradictionsDetected: (detected: Contradiction[]) => void;
+  onCanonChanged: () => void;
   onRename: (chapterId: string, title: string) => void;
   prevChapter?: Chapter;
   nextChapter?: Chapter;
@@ -109,6 +111,7 @@ export function ManuscriptEditor({
     chapterIndex,
     chapterTitle: chapter.title,
     onContradictionsDetected,
+    onCanonChanged,
   });
   useEffect(() => {
     liveProps.current = {
@@ -117,6 +120,7 @@ export function ManuscriptEditor({
       chapterIndex,
       chapterTitle: chapter.title,
       onContradictionsDetected,
+      onCanonChanged,
     };
   });
 
@@ -138,6 +142,8 @@ export function ManuscriptEditor({
         paragraphText: trimmed,
         precedingContext: preceding || undefined,
       });
+      // Facts were stored/updated → canon changed, refresh the Story Bible.
+      if (result.facts.length > 0) p.onCanonChanged();
       if (result.contradictions.length === 0) return;
       for (const c of result.contradictions) {
         try {
