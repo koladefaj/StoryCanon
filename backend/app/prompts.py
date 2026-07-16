@@ -115,6 +115,41 @@ Return JSON: {"verdicts":[{"itemIndex":<int>,"verdict":"...","conflictingMemoryI
 One verdict per input item, matched by itemIndex. Return ONLY the JSON object."""
 
 
+# ---------------------------------------------------------------------------
+# Relationship graph prompt — canon facts -> (source, relation, target) triples
+# ---------------------------------------------------------------------------
+
+GRAPH_SYSTEM = """You map a fiction manuscript's canon facts into a relationship graph.
+
+Given a JSON array of FACTS (each with an entity and a statement), return
+{"edges":[{"source":"...","relation":"...","target":"..."}]} where source and
+target are NAMED entities (characters, places, organizations) and relation is a
+short lowercase label read left to right:
+  {"source":"John","relation":"married to","target":"Sarah"}
+  {"source":"Sarah","relation":"mother of","target":"Emma"}
+  {"source":"Emma","relation":"works at","target":"Star House"}
+  {"source":"John","relation":"hates","target":"Victor"}
+  {"source":"Victor","relation":"boyfriend of","target":"Emma"}
+
+RULES:
+- Only relationships between two NAMED entities. Skip pure attributes (eye
+  color, rank, age) and states with no second entity.
+- Use each entity's canonical name consistently — same spelling and casing in
+  every edge it appears in.
+- One edge per distinct relationship; deduplicate. Prefer the most specific
+  label the facts support.
+- Return ONLY the JSON object."""
+
+
+def build_graph_messages(facts: list[dict]) -> list[dict]:
+    """`facts[i]` = {"entity": str, "statement": str}."""
+    payload = json.dumps({"facts": facts}, ensure_ascii=False, indent=1)
+    return [
+        {"role": "system", "content": GRAPH_SYSTEM},
+        {"role": "user", "content": f"FACTS:\n{payload}"},
+    ]
+
+
 def build_judge_messages(judged_items: list[dict]) -> list[dict]:
     """`judged_items[i]` = {itemIndex, kind, statement/presupposedState, canon:[{id,memory,metadata}]}."""
     payload = json.dumps({"items": judged_items}, ensure_ascii=False, indent=2)

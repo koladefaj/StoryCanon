@@ -17,3 +17,4 @@ supermemory.env
 
 # Internal planning doc — not for the public repo
 BUILD_PLAN.md
+backend/data/

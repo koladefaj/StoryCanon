@@ -10,11 +10,14 @@ import uuid
 from collections import defaultdict
 
 from . import memory
-from .llm import extract, judge
+from .llm import extract, extract_graph, judge
 from .models import (
     Claim,
     Fact,
     FactRef,
+    GraphEdge,
+    GraphNode,
+    GraphResponse,
     ParagraphCheckResponse,
     PendingContradiction,
     ResolveRequest,
@@ -172,98 +175,97 @@ async def _check_against_canon(
     )
 
 
-async def continuity_check(book_id: str) -> list[PendingContradiction]:
-    """Full-book scan: judge every paragraph against strictly-earlier canon.
+async def continuity_check_events(book_id: str):
+    """Full-book scan as an event stream: real {'type':'phase'} progress per
+    chapter, then one {'type':'result', 'contradictions': [...]}.
 
-    Read-only — the live loop already stored the facts; this pass only surfaces
-    contradictions the live checks missed (dropped checks, never-checked
-    paragraphs). No lock needed: nothing is written.
+    Self-sufficient: processes chapters in index order and builds canon as it
+    goes by reusing the live paragraph-check pipeline per paragraph, so it
+    surfaces cross-chapter contradictions even on a book that was never
+    live-checked. Chapters run sequentially — chapter N's facts must be stored
+    before chapter N+1 is judged against them — while paragraphs inside a
+    chapter run concurrently (bounded). Re-runs are safe: paragraph-check skips
+    unchanged facts and version-updates changed ones instead of duplicating.
     """
-    chapters = await memory.list_chapters(book_id)
-    # Bound LLM concurrency; searches inside each paragraph stay concurrent.
-    sem = asyncio.Semaphore(4)
+    yield {"type": "phase", "label": "Reading chapters…"}
+    chapters = sorted(await memory.list_chapters(book_id), key=lambda c: c["index"])
+    sem = asyncio.Semaphore(4)  # bound concurrent LLM work (Groq free-tier friendly)
 
-    async def scan_paragraph(
-        ch: dict, text: str, preceding: str | None
-    ) -> list[PendingContradiction]:
+    async def scan_paragraph(ch: dict, text: str, preceding: str | None):
         async with sem:
-            extraction = await extract(text, preceding)
-        facts = _dedupe_facts(extraction.facts)
-        claims = _dedupe_claims(extraction.claims)
-        if not facts and not claims:
-            return []
-
-        async def sf(f: Fact) -> list[dict]:
-            return await memory.search_facts(
-                f"{f.entity} {f.attribute}: {f.statement}",
-                book_id,
-                chapter_index_lt=ch["index"],
+            res = await paragraph_check(
+                book_id=book_id,
+                chapter_id=ch["id"],
+                chapter_index=ch["index"],
+                chapter_title=ch["title"],
+                paragraph_text=text,
+                preceding_context=preceding,
             )
+        return res.contradictions
 
-        async def sc(c: Claim) -> list[dict]:
-            hits = await memory.search_facts(
-                f"{c.entity}: {c.presupposedState}", book_id, chapter_index_lt=ch["index"]
-            )
-            if not hits:
-                hits = await memory.search_facts(
-                    c.entity, book_id, chapter_index_lt=ch["index"]
-                )
-            return hits
-
-        fact_hits, claim_hits = await asyncio.gather(
-            asyncio.gather(*[sf(f) for f in facts]) if facts else _empty(),
-            asyncio.gather(*[sc(c) for c in claims]) if claims else _empty(),
-        )
-
-        items: list[dict] = []
-        meta: list[tuple[str, object, dict]] = []
-        for f, hits in zip(facts, fact_hits):
-            if not hits:
-                continue
-            items.append(
-                {
-                    "itemIndex": len(items),
-                    "kind": "fact",
-                    "statement": f.statement,
-                    "canon": _canon_payload(hits),
-                }
-            )
-            meta.append(("fact", f, {h["id"]: h for h in hits}))
-        for c, hits in zip(claims, claim_hits):
-            if not hits:
-                continue
-            items.append(
-                {
-                    "itemIndex": len(items),
-                    "kind": "claim",
-                    "presupposedState": c.presupposedState,
-                    "canon": _canon_payload(hits),
-                }
-            )
-            meta.append(("claim", c, {h["id"]: h for h in hits}))
-        if not items:
-            return []
-
-        async with sem:
-            verdicts = (await judge(items)).verdicts
-        verdict_by_index = {v.itemIndex: v for v in verdicts}
-        out: list[PendingContradiction] = []
-        for i, (kind, obj, hits_by_id) in enumerate(meta):
-            v = verdict_by_index.get(i)
-            if v is not None and v.verdict == "contradiction":
-                out.append(
-                    _build_pending(kind, obj, v.conflictingMemoryId, hits_by_id,
-                                   ch["id"], ch["index"], ch["title"], v.reason)
-                )
-        return out
-
-    tasks = []
-    for ch in chapters:
+    all_pending: list[PendingContradiction] = []
+    for i, ch in enumerate(chapters, start=1):
         paragraphs = _html_paragraphs(ch["content"])
-        for j, text in enumerate(paragraphs):
-            tasks.append(scan_paragraph(ch, text, paragraphs[j - 1] if j > 0 else None))
-    groups = await asyncio.gather(*tasks)
-    return _dedupe_pending([p for group in groups for p in group])
+        if not paragraphs:
+            continue
+        yield {
+            "type": "phase",
+            "label": (
+                f"Chapter {i}/{len(chapters)} — “{ch['title']}” "
+                f"({len(paragraphs)} paragraph{'s' if len(paragraphs) != 1 else ''})…"
+            ),
+        }
+        groups = await asyncio.gather(
+            *[
+                scan_paragraph(ch, text, paragraphs[j - 1] if j > 0 else None)
+                for j, text in enumerate(paragraphs)
+            ]
+        )
+        for group in groups:
+            all_pending.extend(group)
+    yield {"type": "result", "contradictions": _dedupe_pending(all_pending)}
+
+
+async def continuity_check(book_id: str) -> list[PendingContradiction]:
+    """Non-streaming wrapper over continuity_check_events."""
+    out: list[PendingContradiction] = []
+    async for ev in continuity_check_events(book_id):
+        if ev["type"] == "result":
+            out = ev["contradictions"]
+    return out
+
+
+async def build_graph(book_id: str) -> GraphResponse:
+    """Canon facts → labeled relationship edges between named entities (one LLM
+    call), normalized for the frontend graph: node ids are lowercased names."""
+    entries = await memory.list_memories(book_id)
+    facts = []
+    for e in entries:
+        if e.get("isForgotten") or e.get("isLatest") is False:
+            continue
+        md = e.get("metadata") or {}
+        facts.append(
+            {"entity": str(md.get("entity") or ""), "statement": str(e.get("memory") or "")}
+        )
+    result = await extract_graph(facts[:200])
+
+    nodes: dict[str, str] = {}
+    edges: list[GraphEdge] = []
+    seen: set[tuple[str, str, str]] = set()
+    for edge in result.edges:
+        s, r, t = edge.source.strip(), edge.relation.strip(), edge.target.strip()
+        if not s or not r or not t or s.lower() == t.lower():
+            continue
+        key = (s.lower(), r.lower(), t.lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        nodes.setdefault(s.lower(), s)
+        nodes.setdefault(t.lower(), t)
+        edges.append(GraphEdge(source=s.lower(), relation=r, target=t.lower()))
+    return GraphResponse(
+        nodes=[GraphNode(id=k, label=v) for k, v in nodes.items()], edges=edges
+    )
 
 
 _P_RE = re.compile(r"<p[^>]*>(.*?)</p>", re.DOTALL | re.IGNORECASE)

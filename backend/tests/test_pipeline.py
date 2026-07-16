@@ -168,26 +168,63 @@ async def test_fact_and_claim_flagging_same_memory_yield_one_card(wiring):
     assert res.contradictions[0].oldMemoryId == "m7"
 
 
-async def test_continuity_check_is_read_only_and_dedupes(wiring, monkeypatch):
+async def test_continuity_check_builds_canon_and_finds_cross_chapter(monkeypatch):
+    """Self-sufficient scan: cold chapters (no prior canon), canon built in chapter
+    order as it goes, and a cross-chapter contradiction surfaced as one card."""
+
     async def fake_list_chapters(_book_id):
         return [
-            {"id": "ch1", "title": "The Salt Road", "index": 1,
-             "content": "<p>Elara's eyes caught the light, a startling green.</p>"},
-            {"id": "ch3", "title": "The Archive", "index": 3,
-             "content": "<p>Her grey eyes narrowed at the faded entry.</p>"},
+            {"id": "ch1", "title": "One", "index": 1,
+             "content": "<p>Elara has green eyes in the morning light.</p>"},
+            {"id": "ch2", "title": "Two", "index": 2,
+             "content": "<p>Elara has brown eyes now, cold and hard.</p>"},
         ]
 
+    canon: list[dict] = []  # stateful in-memory canon
+
+    def _fact(stmt, excerpt):
+        return Fact(entity="Elara", attribute="eye color", statement=stmt, excerpt=excerpt)
+
+    async def fake_extract(paragraph, _preceding=None):
+        if "green" in paragraph:
+            return ExtractionResult(facts=[_fact("Elara has green eyes.", "green eyes")])
+        return ExtractionResult(facts=[_fact("Elara has brown eyes.", "brown eyes")])
+
+    async def fake_search(_q, _book_id, chapter_index_lt=None, **_kw):
+        lt = chapter_index_lt if chapter_index_lt is not None else 0
+        return [c for c in canon if c["metadata"]["chapterIndex"] < lt]
+
+    async def fake_create(_book_id, memories):
+        for m in memories:
+            canon.append(
+                {"id": f"m{len(canon)}", "memory": m["content"], "metadata": m["metadata"]}
+            )
+        return []
+
+    async def fake_update(_book_id, memory_id, new_content, metadata=None):
+        return {"id": f"{memory_id}-v2"}
+
+    async def fake_judge(items):  # brown-vs-green → contradiction
+        return JudgeResult(verdicts=[
+            ItemVerdict(itemIndex=it["itemIndex"], verdict="contradiction",
+                        conflictingMemoryId=it["canon"][0]["id"])
+            for it in items
+        ])
+
     monkeypatch.setattr(pipeline.memory, "list_chapters", fake_list_chapters)
-    wiring["extraction"] = ExtractionResult(facts=[GREEN_FACT])  # every paragraph
-    wiring["hits"] = [_canon_hit("m1")]
-    wiring["verdicts"] = [
-        ItemVerdict(itemIndex=0, verdict="contradiction", conflictingMemoryId="m1")
-    ]
+    monkeypatch.setattr(pipeline, "extract", fake_extract)
+    monkeypatch.setattr(pipeline, "judge", fake_judge)
+    monkeypatch.setattr(pipeline.memory, "search_facts", fake_search)
+    monkeypatch.setattr(pipeline.memory, "create_facts", fake_create)
+    monkeypatch.setattr(pipeline.memory, "update_memory", fake_update)
+
     pending = await pipeline.continuity_check("b1")
-    assert wiring["created"] == [] and wiring["updated"] == []  # never writes
-    # Both paragraphs re-detect the same (entity, memory) conflict → one card.
+
+    # ch1's green was stored as canon (the scan is self-sufficient, not read-only).
+    assert any("green" in c["memory"] for c in canon)
+    # ch2's brown conflicts with ch1's green → exactly one card.
     assert len(pending) == 1
-    assert pending[0].oldMemoryId == "m1"
+    assert pending[0].newFactContent == "Elara has brown eyes."
     assert pending[0].status == "unresolved"
 
 

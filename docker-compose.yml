@@ -33,6 +33,11 @@ services:
       # Reach the sibling Supermemory service over the compose network, overriding
       # the localhost value in backend/.env.
       SUPERMEMORY_API_URL: http://supermemory:6767
+      # Zero-config auth: blank out any stale key from backend/.env and read the
+      # server-generated key straight from the shared data volume instead. This
+      # survives `docker compose down -v` (a fresh key is picked up automatically).
+      SUPERMEMORY_API_KEY: ""
+      SUPERMEMORY_API_KEY_FILE: /supermemory-data/api-key
       FRONTEND_ORIGIN: http://localhost:3000
       WATCHFILES_FORCE_POLLING: "true"
       # NOTE: for the local-Ollama fallback, set EXTRACTOR_API_BASE in backend/.env
@@ -46,6 +51,8 @@ services:
     volumes:
       - ./backend:/app
       - /app/.venv
+      # Read-only view of the Supermemory data dir, for API-key auto-discovery.
+      - supermemory-data:/supermemory-data:ro
     depends_on:
       - supermemory
 
