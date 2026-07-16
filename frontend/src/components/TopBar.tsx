@@ -51,12 +51,14 @@ function BookSwitcher({
   onSelectBook,
   onAddBook,
   onRenameBook,
+  onDeleteBook,
 }: {
   books: Book[];
   activeBookId: string;
   onSelectBook: (id: string) => void;
   onAddBook: () => void;
   onRenameBook: (id: string, title: string) => void;
+  onDeleteBook: (id: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -118,37 +120,52 @@ function BookSwitcher({
             </>
           )}
           {books.map((b) => (
-            <button
+            <div
               key={b.id}
-              type="button"
-              onClick={() => {
-                onSelectBook(b.id);
-                setOpen(false);
-              }}
               className={cn(
-                "flex w-full cursor-pointer items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left text-[13px] transition-colors hover:bg-ink/5",
-                b.id === activeBookId
-                  ? "font-medium text-ink"
-                  : "text-ink-soft",
+                "group flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-[13px] transition-colors hover:bg-ink/5",
+                b.id === activeBookId ? "font-medium text-ink" : "text-ink-soft",
               )}
             >
-              <span className="truncate">{b.title}</span>
-              {b.id === activeBookId && (
-                <svg
-                  width="12"
-                  height="12"
-                  viewBox="0 0 12 12"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  className="shrink-0"
+              <button
+                type="button"
+                onClick={() => {
+                  onSelectBook(b.id);
+                  setOpen(false);
+                }}
+                className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left"
+              >
+                <span className="truncate">{b.title}</span>
+                {b.id === activeBookId && (
+                  <svg
+                    width="12"
+                    height="12"
+                    viewBox="0 0 12 12"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="shrink-0"
+                  >
+                    <path d="M2.5 6.5l2.5 2.5 4.5-5" />
+                  </svg>
+                )}
+              </button>
+              {books.length > 1 && (
+                <button
+                  type="button"
+                  onClick={() => onDeleteBook(b.id)}
+                  aria-label={`Delete book ${b.title}`}
+                  title="Delete book"
+                  className="shrink-0 cursor-pointer rounded p-0.5 text-ink-faint opacity-0 transition-opacity hover:text-flag-red focus:opacity-100 group-hover:opacity-100"
                 >
-                  <path d="M2.5 6.5l2.5 2.5 4.5-5" />
-                </svg>
+                  <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round">
+                    <path d="M3 4.5h10M6.5 4.5V3.5a1 1 0 011-1h1a1 1 0 011 1v1M5 4.5l.5 8a1 1 0 001 1h3a1 1 0 001-1l.5-8" />
+                  </svg>
+                </button>
               )}
-            </button>
+            </div>
           ))}
           <div className="my-1 border-t border-border-soft" />
           <button
@@ -174,6 +191,7 @@ export function TopBar({
   onSelectBook,
   onAddBook,
   onRenameBook,
+  onDeleteBook,
   chapterTitle,
   saveState,
   unresolvedCount,
@@ -187,6 +205,7 @@ export function TopBar({
   onSelectBook: (id: string) => void;
   onAddBook: () => void;
   onRenameBook: (id: string, title: string) => void;
+  onDeleteBook: (id: string) => void;
   chapterTitle: string;
   saveState: SaveState;
   unresolvedCount: number;
@@ -212,6 +231,7 @@ export function TopBar({
             onSelectBook={onSelectBook}
             onAddBook={onAddBook}
             onRenameBook={onRenameBook}
+            onDeleteBook={onDeleteBook}
           />
           <span className="px-0.5 text-ink-faint">/</span>
           <span className="min-w-0 truncate text-[13px] text-ink-soft">

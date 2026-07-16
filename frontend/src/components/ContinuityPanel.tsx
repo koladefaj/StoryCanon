@@ -1,10 +1,15 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Contradiction, ContradictionStatus } from "@/lib/types";
 import { FactCard } from "./FactCard";
+import { StoryBible } from "./StoryBible";
+import { Cast } from "./Cast";
+import { cn } from "@/lib/utils";
 
 export function ContinuityPanel({
+  bookId,
+  canonRefreshKey = 0,
   contradictions,
   activeContradictionId,
   focusNonce = 0,
@@ -14,6 +19,9 @@ export function ContinuityPanel({
   onJump,
   onResolve,
 }: {
+  bookId: string;
+  // Bumped by the parent when canon changes, so the Story Bible re-fetches.
+  canonRefreshKey?: number;
   contradictions: Contradiction[];
   activeContradictionId: string | null;
   // Bumped by the parent on each editor-mark click to re-trigger the vibrate.
@@ -24,6 +32,7 @@ export function ContinuityPanel({
   onJump: (contradictionId: string, chapterId: string) => void;
   onResolve: (contradictionId: string, status: ContradictionStatus) => void;
 }) {
+  const [tab, setTab] = useState<"issues" | "bible" | "cast">("issues");
   const unresolved = contradictions.filter((c) => c.status === "unresolved");
   const resolved = contradictions.filter((c) => c.status !== "unresolved");
 
@@ -46,21 +55,63 @@ export function ContinuityPanel({
 
   return (
     <aside className="flex w-80 shrink-0 flex-col border-l border-border">
-      <div className="border-b border-border-soft px-5 py-4">
-        <p className="text-sm font-medium text-ink">Continuity</p>
-        <p className="mt-0.5 text-xs text-ink-faint">
-          {checking
-            ? "Checking manuscript"
-            : !checked
-              ? "Not checked yet"
-              : unresolved.length === 0
-                ? "No open contradictions"
-                : `${unresolved.length} awaiting a decision`}
+      <div className="border-b border-border-soft px-5 pt-4 pb-0">
+        <p className="text-sm font-medium text-ink">
+          {tab === "issues"
+            ? "Continuity"
+            : tab === "bible"
+              ? "Story Bible"
+              : "Cast"}
         </p>
+        <p className="mt-0.5 text-xs text-ink-faint">
+          {tab === "cast"
+            ? "Who's who and how they connect"
+            : tab === "bible"
+              ? "Everything the story has established"
+              : checking
+                ? "Checking manuscript"
+                : !checked
+                  ? "Not checked yet"
+                  : unresolved.length === 0
+                    ? "No open contradictions"
+                    : `${unresolved.length} awaiting a decision`}
+        </p>
+        <div className="mt-3 flex gap-4">
+          {(
+            [
+              ["issues", "Issues"],
+              ["bible", "Story Bible"],
+              ["cast", "Cast"],
+            ] as const
+          ).map(([key, label]) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setTab(key)}
+              className={cn(
+                "cursor-pointer border-b-2 pb-2 text-xs font-medium transition-colors",
+                tab === key
+                  ? "border-ink text-ink"
+                  : "border-transparent text-ink-faint hover:text-ink-soft",
+              )}
+            >
+              {label}
+              {key === "issues" && unresolved.length > 0 && (
+                <span className="ml-1 rounded-full bg-flag-soft px-1.5 text-[10px] font-semibold text-flag">
+                  {unresolved.length}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
       </div>
 
       <div className="flex-1 overflow-y-auto">
-        {checking ? (
+        {tab === "cast" ? (
+          <Cast key={bookId} bookId={bookId} />
+        ) : tab === "bible" ? (
+          <StoryBible key={bookId} bookId={bookId} refreshKey={canonRefreshKey} />
+        ) : checking ? (
           <div className="mt-16 flex flex-col items-center px-6 text-center">
             <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-ink-faint" />
             <p className="mt-3 animate-pulse text-[13px] text-ink-faint">

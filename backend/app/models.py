@@ -134,6 +134,12 @@ class ChaptersResponse(BaseModel):
     chapters: list[ChapterOut] = Field(default_factory=list)
 
 
+class ContradictionsPayload(BaseModel):
+    # Frontend Contradiction records, stored verbatim so a refresh restores the
+    # panel + inline marks without re-running the LLM.
+    contradictions: list[dict] = Field(default_factory=list)
+
+
 class BookOut(BaseModel):
     id: str
     title: str
@@ -150,3 +156,53 @@ class BookSaveRequest(BaseModel):
 
 class ContinuityCheckResponse(BaseModel):
     contradictions: list[PendingContradiction] = Field(default_factory=list)
+
+
+class CanonVersion(BaseModel):
+    content: str
+    version: Optional[int] = None
+    updatedAt: Optional[str] = None
+
+
+class CanonEntry(BaseModel):
+    id: str
+    content: str
+    entity: str
+    attribute: str = ""
+    chapterTitle: str = ""
+    chapterIndex: Optional[int] = None
+    updatedAt: str = ""
+    version: Optional[int] = None
+    # Older versions, newest first (empty until a memory has been updated).
+    history: list[CanonVersion] = Field(default_factory=list)
+
+
+class CanonResponse(BaseModel):
+    entries: list[CanonEntry] = Field(default_factory=list)
+
+
+class ForgetRequest(BaseModel):
+    memoryId: str
+    reason: str = "Removed from canon by the author"
+
+
+class GraphEdge(BaseModel):
+    source: str
+    relation: str
+    target: str
+
+
+class GraphNode(BaseModel):
+    id: str
+    label: str
+
+
+class GraphLLMResult(BaseModel):
+    """Raw LLM output for relationship extraction."""
+
+    edges: list[GraphEdge] = Field(default_factory=list)
+
+
+class GraphResponse(BaseModel):
+    nodes: list[GraphNode] = Field(default_factory=list)
+    edges: list[GraphEdge] = Field(default_factory=list)

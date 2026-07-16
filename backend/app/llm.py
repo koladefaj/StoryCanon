@@ -9,8 +9,8 @@ import litellm
 from pydantic import BaseModel, ValidationError
 
 from .config import settings
-from .models import ExtractionResult, JudgeResult
-from .prompts import build_extract_messages, build_judge_messages
+from .models import ExtractionResult, GraphLLMResult, JudgeResult
+from .prompts import build_extract_messages, build_graph_messages, build_judge_messages
 
 logger = logging.getLogger("continuity.llm")
 
@@ -75,3 +75,9 @@ async def judge(judged_items: list[dict]) -> JudgeResult:
     if not judged_items:
         return JudgeResult()
     return await _complete_json(build_judge_messages(judged_items), JudgeResult)
+
+
+async def extract_graph(facts: list[dict]) -> GraphLLMResult:
+    if not facts:
+        return GraphLLMResult()
+    return await _complete_json(build_graph_messages(facts), GraphLLMResult)

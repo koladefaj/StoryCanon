@@ -4,15 +4,18 @@ Container-tag convention: one tag per book, `book_{bookId}`.
 Chapters (documents) live under `book_{bookId}:chapters` so their auto-extracted
 memories don't pollute our curated fact schema.
 """
+import asyncio
+import json
+from pathlib import Path
 from typing import Any, Optional
 
 import httpx
 from supermemory import AsyncSupermemory
 
-from .config import settings
+from .config import resolve_supermemory_key, settings
 
 client = AsyncSupermemory(
-    api_key=settings.supermemory_api_key,
+    api_key=resolve_supermemory_key(),
     base_url=settings.supermemory_api_url,
 )
 
@@ -132,83 +135,145 @@ async def list_memories(book_id: str) -> list[dict]:
     return resp.json().get("memoryEntries", [])
 
 
-# --- Book registry (documents under one global tag) --------------------------
-# The book list itself must survive refreshes; chapters alone aren't enumerable
-# because container tags can't be listed.
+# --- Book & chapter PROSE stored in a local JSON library ---------------------
+# Supermemory documents are effectively write-once on the local server (re-adding
+# or updating a customId does NOT replace content — verified), which loses every
+# edit after the first save. Per BUILD_PLAN §3.6, manuscript prose falls back to a
+# JSON file; Supermemory stays the canon/facts database. The file lives under the
+# bind-mounted backend dir, so it survives container restarts.
 
-BOOKS_TAG = "books-registry"
+_LIBRARY_PATH = Path(__file__).resolve().parent.parent / "data" / "library.json"
+_library_lock = asyncio.Lock()
+
+
+def _read_library() -> dict:
+    try:
+        data = json.loads(_LIBRARY_PATH.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {"books": {}}
+    data.setdefault("books", {})
+    return data
+
+
+def _write_library(data: dict) -> None:
+    _LIBRARY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    tmp = _LIBRARY_PATH.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(_LIBRARY_PATH)  # atomic swap
+
+
+def _ensure_book(data: dict, book_id: str, title: str | None = None) -> dict:
+    book = data["books"].setdefault(
+        book_id, {"title": title or "Untitled Book", "chapters": {}}
+    )
+    book.setdefault("chapters", {})
+    return book
 
 
 async def save_book(book_id: str, title: str) -> str:
-    """Upsert a book's metadata (same custom_id → diff-update on rename)."""
-    resp = await client.documents.add(
-        content=f"Book: {title}",
-        custom_id=f"book-meta-{book_id}",
-        container_tag=BOOKS_TAG,
-        metadata={"kind": "book", "bookId": book_id, "title": title},
-    )
-    return resp.id
+    async with _library_lock:
+        data = _read_library()
+        book = _ensure_book(data, book_id, title)
+        if title:
+            book["title"] = title
+        _write_library(data)
+    return book_id
 
 
 async def list_books() -> list[dict]:
-    resp = await client.documents.list(container_tags=[BOOKS_TAG], limit=100)
-    out: list[dict] = []
-    for doc in resp.memories or []:
-        md = doc.metadata if isinstance(doc.metadata, dict) else {}
-        if md.get("kind") != "book" or not md.get("bookId"):
-            continue
-        out.append(
-            {"id": str(md["bookId"]), "title": str(md.get("title") or "Untitled Book")}
-        )
-    return out
-
-
-# --- Chapter prose stored as Supermemory documents (durable persistence) -----
-
-
-def _chapter_custom_id(book_id: str, chapter_id: str) -> str:
-    # customId charset: alphanumeric + - _ . only. Book/chapter ids are slug-safe.
-    return f"{book_id}--{chapter_id}"
+    async with _library_lock:
+        data = _read_library()
+    return [
+        {"id": bid, "title": b.get("title") or "Untitled Book"}
+        for bid, b in data["books"].items()
+    ]
 
 
 async def save_chapter(
     book_id: str, chapter_id: str, title: str, content: str, index: int
 ) -> str:
-    """Upsert a chapter's prose. Re-adding the same custom_id diff-updates it."""
-    resp = await client.documents.add(
-        content=content or "<p></p>",
-        custom_id=_chapter_custom_id(book_id, chapter_id),
-        container_tag=chapters_tag(book_id),
-        metadata={
-            "kind": "chapter",
-            "bookId": book_id,
-            "chapterId": chapter_id,
+    """Upsert a chapter's prose. Auto-creates the book entry, so writing survives
+    even before the book is given a title."""
+    async with _library_lock:
+        data = _read_library()
+        book = _ensure_book(data, book_id)
+        book["chapters"][chapter_id] = {
             "title": title,
             "index": index,
-        },
-    )
-    return resp.id
+            "content": content,
+        }
+        _write_library(data)
+    return chapter_id
+
+
+async def save_contradictions(book_id: str, contradictions: list[dict]) -> None:
+    """Persist the book's detected contradictions so a refresh restores the panel
+    and inline highlights WITHOUT re-running any LLM extraction/judging."""
+    async with _library_lock:
+        data = _read_library()
+        book = _ensure_book(data, book_id)
+        book["contradictions"] = contradictions
+        _write_library(data)
+
+
+async def list_contradictions(book_id: str) -> list[dict]:
+    async with _library_lock:
+        data = _read_library()
+    book = data["books"].get(book_id)
+    return book.get("contradictions", []) if book else []
 
 
 async def list_chapters(book_id: str) -> list[dict]:
-    """Reconstruct a book's chapters from stored documents, ordered by index."""
-    resp = await client.documents.list(
-        container_tags=[chapters_tag(book_id)],
-        include_content=True,
-        limit=100,
-    )
-    out: list[dict] = []
-    for doc in resp.memories or []:
-        md = doc.metadata if isinstance(doc.metadata, dict) else {}
-        if md.get("kind") != "chapter":
-            continue
-        out.append(
-            {
-                "id": str(md.get("chapterId") or ""),
-                "title": str(md.get("title") or "Untitled"),
-                "index": int(md.get("index") or 0),
-                "content": doc.content or "",
-            }
-        )
+    async with _library_lock:
+        data = _read_library()
+    book = data["books"].get(book_id)
+    if not book:
+        return []
+    out = [
+        {
+            "id": cid,
+            "title": c.get("title") or "Untitled",
+            "index": int(c.get("index") or 0),
+            "content": c.get("content") or "",
+        }
+        for cid, c in book.get("chapters", {}).items()
+    ]
     out.sort(key=lambda c: c["index"])
     return out
+
+
+# --- Deletion ----------------------------------------------------------------
+
+
+async def _forget_memories(book_id: str, entries: list[dict]) -> None:
+    await asyncio.gather(
+        *[forget(book_id, e["id"], "deleted") for e in entries if e.get("id")],
+        return_exceptions=True,
+    )
+
+
+async def delete_chapter(book_id: str, chapter_id: str) -> None:
+    """Remove a chapter's prose and forget the canon facts it established, so a
+    deleted chapter can't keep flagging (or being flagged by) other chapters."""
+    async with _library_lock:
+        data = _read_library()
+        book = data["books"].get(book_id)
+        if book and chapter_id in book.get("chapters", {}):
+            del book["chapters"][chapter_id]
+            _write_library(data)
+    entries = await list_memories(book_id)
+    await _forget_memories(
+        book_id,
+        [e for e in entries
+         if str((e.get("metadata") or {}).get("chapterId") or "") == chapter_id],
+    )
+
+
+async def delete_book(book_id: str) -> None:
+    """Remove a book entirely: its prose from the library and all its canon facts."""
+    async with _library_lock:
+        data = _read_library()
+        if book_id in data["books"]:
+            del data["books"][book_id]
+            _write_library(data)
+    await _forget_memories(book_id, await list_memories(book_id))
