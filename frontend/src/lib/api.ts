@@ -26,6 +26,9 @@ export type PendingContradiction = Contradiction & {
 export type ParagraphCheckResult = {
   facts: ExtractedFact[];
   contradictions: PendingContradiction[];
+  // Which paragraph these findings replace. Echoed by the backend so an empty
+  // `contradictions` reads as "this paragraph is clean now" rather than "no news".
+  paragraphIndex?: number | null;
 };
 
 export type ParagraphCheckInput = {
@@ -34,6 +37,7 @@ export type ParagraphCheckInput = {
   chapterTitle: string;
   paragraphText: string;
   precedingContext?: string;
+  paragraphIndex?: number;
 };
 
 export async function paragraphCheck(
@@ -195,6 +199,9 @@ export async function continuityCheckStream(
       const event = JSON.parse(chunk.slice(6));
       if (event.type === "phase") onPhase(event.label);
       else if (event.type === "result") result = event.contradictions;
+      // The scan can't fail with a status code once the stream is open, so the
+      // backend reports a mid-scan provider failure as an event.
+      else if (event.type === "error") throw new Error(event.detail);
     }
   }
   if (result === null) throw new Error("stream ended without a result");

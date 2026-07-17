@@ -29,10 +29,13 @@ function countWords(html: string): number {
 /** Identity of a conflict for dedupe: same canon memory challenged by the same
  *  excerpt is the same conflict, whatever id the detection got. Mock/local
  *  entries (no oldMemoryId) keep id identity. */
+// Backend ids are derived from what the conflict IS (chapter + entity +
+// attribute + the new statement), so the same conflict re-detected under a
+// bumped canon version reproduces the same id. That makes the id the conflict
+// key — keying on oldMemoryId used to fork one conflict into two cards whenever
+// the challenged memory was version-updated between checks.
 function conflictKey(c: Contradiction): string {
-  return c.oldMemoryId
-    ? `${c.entity.toLowerCase()}|${c.oldMemoryId}|${c.newFact.excerpt.toLowerCase()}`
-    : c.id;
+  return c.id;
 }
 
 function newChapter(index: number): Chapter {
@@ -234,27 +237,46 @@ export function Workspace() {
     [],
   );
 
-  // Live contradictions detected while typing — merge into the panel by id.
+  // Live check results. `scope` makes the result authoritative for one paragraph:
+  // whatever that paragraph reported before is dropped and replaced by this run,
+  // so editing prose to fix a conflict clears its card instead of stacking a
+  // second one. Without a scope (mock data) it degrades to a plain merge.
   const handleContradictionsDetected = useCallback(
-    (detected: Contradiction[]) => {
-      if (detected.length === 0) return;
+    (
+      detected: Contradiction[],
+      scope?: { chapterId: string; paragraphIndex: number },
+    ) => {
+      if (detected.length === 0 && !scope) return;
       const bookId = activeBookId;
-      setShowPanel(true);
+      if (detected.length > 0) setShowPanel(true);
       setResultsByBook((prev) => {
-        // Key by WHAT the conflict is, not by id: a pending contradiction is
-        // never stored, so re-checks of a growing paragraph re-detect it under
-        // a fresh id — merging by id would stack duplicate cards.
-        const byKey = new Map(
-          (prev[bookId] ?? []).map((c) => [conflictKey(c), c]),
-        );
+        const list = prev[bookId] ?? [];
+        const survivors = scope
+          ? list.filter(
+              (c) =>
+                // Resolved cards are the author's decision, not a detection —
+                // a re-check must not silently undo them.
+                c.status !== "unresolved" ||
+                c.newFact.chapterId !== scope.chapterId ||
+                c.paragraphIndex !== scope.paragraphIndex,
+            )
+          : list;
+        const byKey = new Map(survivors.map((c) => [conflictKey(c), c]));
         for (const c of detected) {
           const prior = byKey.get(conflictKey(c));
-          // A decided conflict stays decided; an open one is refreshed with the
-          // new detection (whose id matches the editor mark just re-applied).
+          // A decided conflict stays decided; an open one is refreshed.
           if (prior && prior.status !== "unresolved") continue;
           byKey.set(conflictKey(c), c);
         }
-        return { ...prev, [bookId]: Array.from(byKey.values()) };
+        const next = Array.from(byKey.values());
+        // Same contents in the same order → keep the old array so the effects
+        // keyed on `contradictions` don't re-run on every clean re-check.
+        if (
+          next.length === list.length &&
+          next.every((c, i) => c === list[i])
+        )
+          return prev;
+        return { ...prev, [bookId]: next };
       });
     },
     [activeBookId],

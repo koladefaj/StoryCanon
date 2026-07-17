@@ -17,22 +17,28 @@ const MIN_PARAGRAPH_CHARS = 12;
 
 // --- ProseMirror helpers for the live loop --------------------------------
 
-/** Text of the top-level block the selection is in, plus the previous block's
- *  text (used as pronoun-resolution context). */
-function currentParagraph(editor: Editor): { text: string; preceding: string } {
+/** Text of the top-level block the selection is in, its index among the doc's
+ *  blocks, plus the previous block's text (used as pronoun-resolution context). */
+function currentParagraph(editor: Editor): {
+  text: string;
+  preceding: string;
+  index: number;
+} {
   const { $from } = editor.state.selection;
   // node(1) is the top-level block that actually contains the cursor — the
   // authoritative "current paragraph" regardless of index bookkeeping.
   const block = $from.depth >= 1 ? $from.node(1) : null;
   const text = block?.textContent ?? "";
   const doc = editor.state.doc;
-  // The preceding sibling supplies pronoun-resolution context.
+  // The preceding sibling supplies pronoun-resolution context. This index is
+  // also the supersession key the backend echoes back — it must line up with
+  // _html_paragraphs' block index there.
   const blockIndex = $from.index(0);
   const preceding =
     blockIndex > 0 && blockIndex <= doc.childCount
       ? doc.child(blockIndex - 1).textContent
       : "";
-  return { text, preceding };
+  return { text, preceding, index: blockIndex };
 }
 
 /** Find the first occurrence of `needle` and return its ProseMirror range. */
@@ -87,7 +93,10 @@ export function ManuscriptEditor({
   onMarkClick: (id: string) => void;
   onWordCountChange: (wordCount: number) => void;
   onContentChange: (content: string) => void;
-  onContradictionsDetected: (detected: Contradiction[]) => void;
+  onContradictionsDetected: (
+    detected: Contradiction[],
+    scope?: { chapterId: string; paragraphIndex: number },
+  ) => void;
   onCanonChanged: () => void;
   onRename: (chapterId: string, title: string) => void;
   prevChapter?: Chapter;
@@ -127,7 +136,7 @@ export function ManuscriptEditor({
   const runParagraphCheck = useCallback(async () => {
     const editor = editorRef.current;
     if (!editor) return;
-    const { text, preceding } = currentParagraph(editor);
+    const { text, preceding, index } = currentParagraph(editor);
     const trimmed = text.trim();
     if (trimmed.length < MIN_PARAGRAPH_CHARS) return;
     if (checkedParagraphs.current.has(trimmed)) return;
@@ -141,10 +150,10 @@ export function ManuscriptEditor({
         chapterTitle: p.chapterTitle,
         paragraphText: trimmed,
         precedingContext: preceding || undefined,
+        paragraphIndex: index,
       });
       // Facts were stored/updated → canon changed, refresh the Story Bible.
       if (result.facts.length > 0) p.onCanonChanged();
-      if (result.contradictions.length === 0) return;
       for (const c of result.contradictions) {
         try {
           applyContradictionMark(editor, c.newFact.excerpt, c.id);
@@ -153,7 +162,13 @@ export function ManuscriptEditor({
           // entry below still lands; only the inline mark is skipped.
         }
       }
-      p.onContradictionsDetected(result.contradictions);
+      // Reported even when empty: this result supersedes the paragraph's prior
+      // findings, so "no contradictions" is how fixing the prose clears the flag.
+      // Only reached on success — a failed check must never clear anything.
+      p.onContradictionsDetected(result.contradictions, {
+        chapterId: p.chapterId,
+        paragraphIndex: index,
+      });
     } catch {
       // Backend offline / transient — stay silent, writing must not be blocked.
     }
@@ -271,6 +286,9 @@ export function ManuscriptEditor({
 
   // Ensure every known contradiction in THIS chapter has its inline mark —
   // full-book scan results and flushed checks arrive without marks applied.
+  // Depends on `editor`: with immediatelyRender:false it is null on the first
+  // render, so without it this never re-runs for contradictions that were
+  // already in state at mount (i.e. every chapter switch).
   useEffect(() => {
     const editor = editorRef.current;
     const el = containerRef.current;
@@ -289,10 +307,11 @@ export function ManuscriptEditor({
         // Excerpt no longer present in the edited text — nothing to mark.
       }
     }
-  }, [contradictions, chapter.id]);
+  }, [contradictions, chapter.id, editor]);
 
   // Marks stay inert until a check confirms them: flagged while unresolved,
-  // dotted once decided.
+  // dotted once decided. `mark.contradiction` alone renders invisible, so a
+  // missed pass here means no red at all — hence the `editor` dep (see above).
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
@@ -302,7 +321,7 @@ export function ManuscriptEditor({
       m.classList.toggle("flagged", !!c && c.status === "unresolved");
       m.classList.toggle("resolved", !!c && c.status !== "unresolved");
     });
-  }, [contradictions, chapter.id]);
+  }, [contradictions, chapter.id, editor]);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -315,7 +334,7 @@ export function ManuscriptEditor({
         m.scrollIntoView({ behavior: "smooth", block: "center" });
       }
     });
-  }, [activeContradictionId, chapter.id]);
+  }, [activeContradictionId, chapter.id, editor]);
 
   const tooltipContradiction = tooltip
     ? contradictions.find((c) => c.id === tooltip.id)

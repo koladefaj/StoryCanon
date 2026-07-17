@@ -4,9 +4,9 @@ Worst-case cost per paragraph is exactly 2 LLM calls (extract + one batched judg
 plus 1 batched store, regardless of how many facts the paragraph yields.
 """
 import asyncio
+import hashlib
 import html as html_lib
 import re
-import uuid
 from collections import defaultdict
 
 from . import memory
@@ -40,6 +40,7 @@ async def paragraph_check(
     chapter_title: str,
     paragraph_text: str,
     preceding_context: str | None = None,
+    paragraph_index: int | None = None,
 ) -> ParagraphCheckResponse:
     # Extraction is pure LLM work on the paragraph — no shared state, so it runs
     # outside the lock and concurrent checks only serialize the canon phase.
@@ -48,7 +49,8 @@ async def paragraph_check(
     claims = _dedupe_claims(extraction.claims)
     async with _book_locks[book_id]:
         return await _check_against_canon(
-            book_id, chapter_id, chapter_index, chapter_title, facts, claims
+            book_id, chapter_id, chapter_index, chapter_title, facts, claims,
+            paragraph_index,
         )
 
 
@@ -59,6 +61,7 @@ async def _check_against_canon(
     chapter_title: str,
     facts: list[Fact],
     claims: list[Claim],
+    paragraph_index: int | None = None,
 ) -> ParagraphCheckResponse:
     # 1. All searches concurrently. Facts search ≤ current chapter in ONE query:
     # earlier-chapter hits are canon (judged), same-chapter hits are dedupe/revision
@@ -148,14 +151,16 @@ async def _check_against_canon(
             elif v.verdict == "contradiction":
                 pending.append(
                     _build_pending(kind, obj, v.conflictingMemoryId, hits_by_id,
-                                   chapter_id, chapter_index, chapter_title, v.reason)
+                                   chapter_id, chapter_index, chapter_title, v.reason,
+                                   paragraph_index)
                 )
             # "duplicate" → canon already says this; skip storing.
         else:  # claim
             if v is not None and v.verdict == "contradiction":
                 pending.append(
                     _build_pending(kind, obj, v.conflictingMemoryId, hits_by_id,
-                                   chapter_id, chapter_index, chapter_title, v.reason)
+                                   chapter_id, chapter_index, chapter_title, v.reason,
+                                   paragraph_index)
                 )
 
     # 5. One batched store of new facts + version-updates for revised ones.
@@ -171,7 +176,9 @@ async def _check_against_canon(
 
     stored = to_store + [f for _, f in to_update]
     return ParagraphCheckResponse(
-        facts=stored, contradictions=_dedupe_pending(pending)
+        facts=stored,
+        contradictions=_dedupe_pending(pending),
+        paragraphIndex=paragraph_index,
     )
 
 
@@ -191,7 +198,7 @@ async def continuity_check_events(book_id: str):
     chapters = sorted(await memory.list_chapters(book_id), key=lambda c: c["index"])
     sem = asyncio.Semaphore(4)  # bound concurrent LLM work (Groq free-tier friendly)
 
-    async def scan_paragraph(ch: dict, text: str, preceding: str | None):
+    async def scan_paragraph(ch: dict, text: str, preceding: str | None, index: int):
         async with sem:
             res = await paragraph_check(
                 book_id=book_id,
@@ -200,6 +207,7 @@ async def continuity_check_events(book_id: str):
                 chapter_title=ch["title"],
                 paragraph_text=text,
                 preceding_context=preceding,
+                paragraph_index=index,
             )
         return res.contradictions
 
@@ -217,8 +225,8 @@ async def continuity_check_events(book_id: str):
         }
         groups = await asyncio.gather(
             *[
-                scan_paragraph(ch, text, paragraphs[j - 1] if j > 0 else None)
-                for j, text in enumerate(paragraphs)
+                scan_paragraph(ch, text, paragraphs[j - 1][1] if j > 0 else None, idx)
+                for j, (idx, text) in enumerate(paragraphs)
             ]
         )
         for group in groups:
@@ -272,15 +280,21 @@ _P_RE = re.compile(r"<p[^>]*>(.*?)</p>", re.DOTALL | re.IGNORECASE)
 _TAG_RE = re.compile(r"<[^>]+>")
 
 
-def _html_paragraphs(content: str, min_chars: int = 12) -> list[str]:
-    """TipTap chapter HTML → plain-text paragraphs (mirrors the live-check gate)."""
+def _html_paragraphs(content: str, min_chars: int = 12) -> list[tuple[int, str]]:
+    """TipTap chapter HTML → (block index, plain text) per checkable paragraph.
+
+    The index counts ALL <p> blocks, not just the ones long enough to check, so it
+    matches the block index the editor sends on a live check. The two must agree:
+    they are the key for paragraph-scoped supersession, and a silent mismatch means
+    a re-check never clears the finding it replaces.
+    """
     blocks = _P_RE.findall(content or "") or ([content] if content else [])
-    out: list[str] = []
-    for block in blocks:
+    out: list[tuple[int, str]] = []
+    for i, block in enumerate(blocks):
         text = html_lib.unescape(_TAG_RE.sub(" ", block))
         text = " ".join(text.split())
         if len(text) >= min_chars:
-            out.append(text)
+            out.append((i, text))
     return out
 
 
@@ -351,14 +365,22 @@ def _norm(s: str) -> str:
 
 def _dedupe_pending(pending: list[PendingContradiction]) -> list[PendingContradiction]:
     """One card per challenged canon memory: a fact and a claim from the same
-    paragraph can both flag the same memory. Facts are judged first, so they win."""
+    paragraph can both flag the same memory. Facts are judged first, so they win.
+
+    Also collapses by id: ids are content-derived, so two findings that differ
+    only by which canon version they matched share one id — emitting both would
+    put duplicate ids in the panel and race for the same inline mark.
+    """
     seen: set[tuple[str, str]] = set()
+    seen_ids: set[str] = set()
     out: list[PendingContradiction] = []
     for p in pending:
         key = (p.entity.strip().lower(), p.oldMemoryId)
-        if key not in seen:
-            seen.add(key)
-            out.append(p)
+        if key in seen or p.id in seen_ids:
+            continue
+        seen.add(key)
+        seen_ids.add(p.id)
+        out.append(p)
     return out
 
 
@@ -407,6 +429,30 @@ def _to_memory_payload(
     ]
 
 
+def _pending_id(
+    kind: str, chapter_id: str, entity: str, attribute: str | None, new_content: str
+) -> str:
+    """Stable identity for one logical contradiction.
+
+    Deliberately excludes oldMemoryId: version-bumping the challenged canon
+    memory (e.g. resolving a *different* conflict about the same entity) changes
+    that id, and hashing it would fork one contradiction into two. Excludes the
+    excerpt too — the statement is the claim; the excerpt is just where it was
+    found. A re-check of unchanged prose must reproduce this exact id, or the
+    frontend re-marks and the panel duplicates.
+    """
+    key = "|".join(
+        [
+            kind,
+            chapter_id,
+            _norm(entity),
+            _norm(attribute or ""),
+            _norm(new_content),
+        ]
+    )
+    return hashlib.sha1(key.encode("utf-8")).hexdigest()[:8]
+
+
 def _build_pending(
     kind: str,
     obj,
@@ -416,6 +462,7 @@ def _build_pending(
     chapter_index: int,
     chapter_title: str,
     reason: str | None = None,
+    paragraph_index: int | None = None,
 ) -> PendingContradiction:
     canon = hits_by_id.get(conflicting_id) or next(iter(hits_by_id.values()))
     md = canon["metadata"] or {}
@@ -426,7 +473,9 @@ def _build_pending(
     )
     new_content = obj.statement if kind == "fact" else obj.presupposedState
     new_ref = FactRef(chapterId=chapter_id, chapterTitle=chapter_title, excerpt=obj.excerpt)
-    pid = uuid.uuid4().hex[:8]
+    pid = _pending_id(
+        kind, chapter_id, obj.entity, getattr(obj, "attribute", None), new_content
+    )
     return PendingContradiction(
         id=f"c{pid}",
         entity=obj.entity,
@@ -440,4 +489,5 @@ def _build_pending(
         attribute=getattr(obj, "attribute", None),
         chapterIndex=chapter_index,
         reason=reason,
+        paragraphIndex=paragraph_index,
     )
