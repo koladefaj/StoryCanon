@@ -198,6 +198,26 @@ async def continuity_check_events(book_id: str):
     chapters = sorted(await memory.list_chapters(book_id), key=lambda c: c["index"])
     sem = asyncio.Semaphore(4)  # bound concurrent LLM work (Groq free-tier friendly)
 
+    # Hand the raw prose to Supermemory so it can derive its own memories from it,
+    # alongside our curated canon. Extraction happens server-side and async, so
+    # this only queues the documents — the scan below doesn't wait on it, and a
+    # failure here must never block continuity checking.
+    if chapters:
+        yield {"type": "phase", "label": "Supermemory is reading the prose…"}
+        await asyncio.gather(
+            *[
+                memory.sync_chapter_prose(
+                    book_id,
+                    ch["id"],
+                    ch["title"],
+                    ch["index"],
+                    "\n\n".join(t for _, t in _html_paragraphs(ch["content"])),
+                )
+                for ch in chapters
+            ],
+            return_exceptions=True,
+        )
+
     async def scan_paragraph(ch: dict, text: str, preceding: str | None, index: int):
         async with sem:
             res = await paragraph_check(

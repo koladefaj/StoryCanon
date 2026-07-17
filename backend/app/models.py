@@ -213,6 +213,29 @@ class CanonResponse(BaseModel):
     entries: list[CanonEntry] = Field(default_factory=list)
 
 
+class DerivedMemory(BaseModel):
+    """A memory Supermemory derived from raw prose, with no help from us.
+
+    Deliberately thin: unlike CanonEntry there is no entity/attribute, because
+    nothing here was told what a character or an attribute is — the memory layer
+    read the chapter and decided.
+    """
+
+    id: str
+    content: str
+    chapterTitle: str = ""
+    chapterIndex: Optional[int] = None
+    updatedAt: str = ""
+    raw: Optional[MemoryMeta] = None
+
+
+class DerivedResponse(BaseModel):
+    memories: list[DerivedMemory] = Field(default_factory=list)
+    # False while Supermemory is still processing queued documents, so the UI can
+    # say "reading…" instead of "nothing here".
+    ready: bool = True
+
+
 class ForgetRequest(BaseModel):
     memoryId: str
     reason: str = "Removed from canon by the author"

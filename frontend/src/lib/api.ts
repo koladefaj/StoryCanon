@@ -252,6 +252,27 @@ export async function getCanon(
   return res.json();
 }
 
+/** A memory Supermemory derived from the prose — no entity/attribute, because
+ *  nothing told it what a character is. It read the chapter and decided. */
+export type DerivedMemory = {
+  id: string;
+  content: string;
+  chapterTitle: string;
+  chapterIndex?: number | null;
+  updatedAt: string;
+  raw?: MemoryMeta | null;
+};
+
+export async function getDerived(
+  bookId: string,
+): Promise<{ memories: DerivedMemory[]; ready: boolean }> {
+  const res = await fetch(
+    `${API_BASE}/api/books/${encodeURIComponent(bookId)}/derived`,
+  );
+  if (!res.ok) throw new Error(`getDerived failed: ${res.status}`);
+  return res.json();
+}
+
 export async function forgetMemory(
   bookId: string,
   memoryId: string,
