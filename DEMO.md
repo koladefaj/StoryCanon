@@ -84,10 +84,15 @@ that gap.
 | "his brother Corvin, **the green coat of a common soldier**" | ch2: promoted to Lieutenant, blue coat | **Reversion vs. progression.** The promotion itself isn't flagged. Going backwards is. |
 | "her **sharp blue** eyes" | ch1: grey eyes | **Immutable attribute.** Never supersedes. |
 | "She was **forty**" | ch1: sixty-three | **Monotonic age.** Can rise, never fall. |
-| "He shouted for **Lena**" | ch1: his daughter Mira | **Renamed character** — the classic draft error. |
-
 Deliberately *not* flagged: "Elias raised a cup to his brother" (ch2) presupposes
 arms, not legs. A naive system flags that against "lost both legs." This doesn't.
+
+**Don't promise the Lena rename.** It's in the manuscript, but it does *not* get
+caught, and I measured why rather than guessing: retrieval works (the Mira memory
+surfaces at 0.711 similarity), but the judge rules "Reyes is the father of Lena"
+consistent with "Elias Reyes has a daughter named Mira" — because canon never says
+he has *exactly one* daughter, and a man can have two. That's a reasoning gap, not
+a retrieval one. Leave Lena in the prose as flavour; don't point at it.
 
 ---
 
@@ -187,19 +192,28 @@ Read it out loud once. If a line feels like writing rather than speaking, cut it
 
 ---
 
-### [2:20 – 2:45] — Derived: the part I didn't build
+### [2:20 – 2:45] — Derived: the safety net
 
 *Action: click **Check Continuity**. Wait. Open the Story Bible → **Derived**.*
 
 > "Now here's my favourite bit, and this one isn't me.
 >
-> I hand Supermemory the raw chapters and it pulls out its own memories, in its
-> own container.
+> I also hand Supermemory the raw chapters and let it read them itself.
 >
 > My chapter says *'His daughter Mira ran to the gate.'* Supermemory wrote:
 > *'Captain Elias Reyes has a daughter named Mira, who is seven years old.'*
->
 > I never told it who 'his' was. It read the chapter and figured it out."
+
+*Action (optional, 3s): flip to **Canon** and point at the entity list.*
+
+> "And that matters, because look at mine — I've got Elias, Elias Reyes, and
+> Reyes. Three different people, as far as my extractor's concerned. Supermemory
+> read the same prose and got one man.
+>
+> So it's a safety net. When my own extraction comes up empty on something, the
+> checker falls back on Supermemory's reading instead. Two passes over the same
+> book — mine gives me the exact words to underline, Supermemory's actually knows
+> who everyone is."
 
 ---
 
@@ -209,11 +223,11 @@ Read it out loud once. If a line feels like writing rather than speaking, cut it
 > so stories don't mix. Facts are tagged with their chapter, and I filter on that
 > number when I search — so chapter four only ever gets checked against one, two
 > and three. Earlier chapters are canon, and that's the database enforcing it, not
-> a prompt hoping. Versions keep the history. And Supermemory reads the prose
-> itself.
+> a prompt hoping. Versions keep the whole history. And it reads the prose itself,
+> as a second opinion on my own extraction.
 >
-> The bit that decides something's a contradiction — that part's mine, sitting on
-> top. All of it, on my laptop."
+> The bit that decides something's actually a contradiction — that part's mine,
+> sitting on top. All of it, on my laptop."
 
 ---
 
@@ -241,9 +255,19 @@ Judges may ask "which component did that?" Answers that survive:
 
 - **Supermemory does:** storage, semantic retrieval, the chapter-index numeric
   filter, version chains + history, container scoping, forget-with-reason, and
-  extraction-from-prose (including reference resolution) in the Derived tab.
+  extraction-from-prose (including reference resolution) — which the checker
+  falls back on when our own extraction returns nothing.
 - **You do:** the contradiction judgment — entailment, supersession vs reversion,
   monotonic age. That's your prompt reasoning over what Supermemory returns.
+
+If asked "so does the derived reading actually do anything, or is it a demo?":
+it's a **fallback**. Curated canon is consulted first, because it carries the
+verbatim excerpt the highlight anchors to and the entity/attribute needed to
+version-bump. When curated comes back empty, the checker searches Supermemory's
+reading instead — same chapter filter, same rules. Contradictions raised from it
+are advisory (`oldFactSource: "derived"`): they have no excerpt, and the next
+prose sync re-derives them, so they can't be version-bumped — the card offers
+"Dismiss", and the fix is to edit the chapter.
 
 Do **not** say Supermemory detected the contradiction, or that its *search*
 resolves "the captain" to Reyes. Search is vector similarity; the reference
