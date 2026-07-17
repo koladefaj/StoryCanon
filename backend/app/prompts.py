@@ -36,6 +36,11 @@ RULES:
   introduction or info-dump can legitimately yield 15-20 — emit them all.
 - Do NOT emit trivia as facts (transient weather, dust, a single gesture) unless it
   is a durable state. Do NOT emit a claim for every verb — only tracked states.
+- Do NOT emit a CLAIM for incidental hand, arm, head, or speech actions (raising a
+  cup, gripping, nodding, speaking, reading). These presuppose capabilities canon
+  does not track and cause false contradictions against unrelated states like lost
+  legs. Emit claims only for LOCOMOTION (walking, running, climbing, vaulting) and
+  actions that clearly require a capability canon actually tracks.
 - If the same entity+attribute appears twice, keep the more specific one.
 
 EXAMPLES:
@@ -51,6 +56,9 @@ Paragraph: "Elara walked across the room and poured herself a drink."
 
 Paragraph: "Elena shaved her beard and combed her brown hair."
 -> {"facts":[{"entity":"Elena","attribute":"hair color","statement":"Elena has brown hair.","excerpt":"her brown hair"}],"claims":[{"entity":"Elena","presupposedState":"Elena has a beard (facial hair)","excerpt":"shaved her beard"}]}
+
+Paragraph: "Elias raised a cup to his brother and laughed."
+-> {"facts":[],"claims":[]}
 
 Return ONLY the JSON object, no prose."""
 
@@ -105,8 +113,28 @@ EXCEPTION: if any canon memory establishes the exception for this world or entit
 own rules always outrank real-world defaults. Cite the category-establishing memory
 as conflictingMemoryId.
 
+TEMPORAL STATE CHANGES (supersession vs reversion): Some attributes legitimately
+change as the story advances — rank, role, title, job, coat/insignia, location,
+allegiance, marital status, possessions. Each canon memory carries its chapter in metadata;
+the CURRENT canonical value is the one from the HIGHEST chapter. The item being
+judged was just written, so treat it as the most recent.
+  - If the new value is a plausible new state that differs from the current value,
+    it is "consistent" — a legitimate progression that supersedes the older value
+    (kept as history, not a contradiction). Canon "Voss is a sergeant" (ch2), new
+    "Voss is a captain" (ch5) -> consistent (a promotion).
+  - If the new value reverts to an older, already-superseded value and thereby
+    conflicts with the value established in a LATER chapter, it is a
+    "contradiction". Set conflictingMemoryId to that later memory. Canon "Voss is a
+    captain" (ch5), new "Voss is a sergeant" (ch8) -> contradiction against ch5.
+This applies ONLY to the mutable attributes above. IMMUTABLE attributes — given
+name, eye/hair color, species, birthplace, permanent injuries, deaths — never get
+supersession: any change is a contradiction. Age is mutable but MONOTONIC: it may
+increase across chapters, never decrease (a lower age later is a contradiction).
+
 For a CLAIM, "contradiction" means canon makes the presupposed state false/impossible.
-Claims are never "duplicate".
+A claim contradicts canon only if the SPECIFIC capability it presupposes is the one
+canon negates. Match the body system precisely: "can lift a cup" (arms) does NOT
+conflict with "lost both legs" (locomotion). Claims are never "duplicate".
 
 When verdict is "contradiction", set "conflictingMemoryId" to the id of the specific
 canon memory it conflicts with.

@@ -59,7 +59,8 @@ async def search_facts(
         search_mode="memories",
         threshold=threshold,
         limit=limit,
-        rerank=True,
+        # Workers-AI-only binding; throws on the self-hosted server (0.0.5).
+        rerank=False,
     )
     if filters:
         kwargs["filters"] = filters

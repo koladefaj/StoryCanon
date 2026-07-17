@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { ThemeToggle } from "./ThemeToggle";
 import type { Book } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -221,9 +222,13 @@ export function TopBar({
           <PanelIcon side="left" />
         </IconButton>
         <div className="flex min-w-0 items-center gap-1 pl-1.5">
-          <span className="text-sm font-semibold tracking-tight text-ink">
+          <Link
+            href="/"
+            title="Back to landing page"
+            className="rounded-md text-sm font-semibold tracking-tight text-ink transition-colors hover:text-ink-soft"
+          >
             StoryCanon
-          </span>
+          </Link>
           <span className="px-0.5 text-ink-faint">/</span>
           <BookSwitcher
             books={books}

@@ -36,4 +36,6 @@ export type Contradiction = {
   chapterIndex?: number;
   // The judge's short explanation of the conflict — shown on hover in the editor.
   reason?: string;
+  // Which paragraph produced this; a re-check of that paragraph supersedes it.
+  paragraphIndex?: number | null;
 };

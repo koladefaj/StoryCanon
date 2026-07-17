@@ -1,3 +1,4 @@
+import Image from "next/image";
 import Link from "next/link";
 
 const FEATURES = [
@@ -30,7 +31,16 @@ export default function Home() {
         </Link>
       </header>
 
-      <section className="flex flex-1 flex-col items-center justify-center px-6 py-20 text-center">
+      <section className="relative isolate flex flex-1 flex-col items-center justify-center overflow-hidden px-6 py-20 text-center">
+        <Image
+          src="/hero.png"
+          alt=""
+          fill
+          preload
+          sizes="100vw"
+          className="-z-20 object-cover"
+        />
+        <div className="absolute inset-0 -z-10 bg-paper/25" />
         <p className="text-xs font-medium uppercase tracking-[0.2em] text-flag">
           Your story&rsquo;s memory
         </p>

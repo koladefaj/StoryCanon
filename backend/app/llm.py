@@ -3,9 +3,11 @@ parse-and-retry fallback so we never trust that the structured-output path exist
 """
 import json
 import logging
+import re
 from typing import Type, TypeVar
 
 import litellm
+from litellm.exceptions import RateLimitError
 from pydantic import BaseModel, ValidationError
 
 from .config import settings
@@ -18,6 +20,30 @@ T = TypeVar("T", bound=BaseModel)
 
 # LiteLLM is chatty on import; keep our logs clean.
 litellm.suppress_debug_info = True
+
+# LiteLLM retries these internally with exponential backoff, honouring the
+# provider's Retry-After. Covers the brief per-minute limits; a exhausted daily
+# quota survives all retries and surfaces as LLMRateLimited.
+_NUM_RETRIES = 2
+
+
+class LLMRateLimited(Exception):
+    """Provider rate limit / quota exhausted, after retries. Becomes a 429."""
+
+    def __init__(self, message: str, retry_after: float | None = None):
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
+def _parse_retry_after(err: Exception) -> float | None:
+    """Providers report the wait in the error body ("try again in 1m23.808s")
+    rather than a header LiteLLM exposes, so read it back out of the message."""
+    text = str(err)
+    m = re.search(r"try again in (?:(\d+)m)?([\d.]+)s", text)
+    if not m:
+        return None
+    minutes = float(m.group(1)) if m.group(1) else 0.0
+    return minutes * 60 + float(m.group(2))
 
 
 async def _complete_json(messages: list[dict], schema: Type[T]) -> T:
@@ -51,7 +77,19 @@ async def _complete_json(messages: list[dict], schema: Type[T]) -> T:
 
 
 async def _raw_completion(kwargs: dict) -> str:
-    resp = await litellm.acompletion(**kwargs)
+    try:
+        resp = await litellm.acompletion(**kwargs, num_retries=_NUM_RETRIES)
+    except RateLimitError as err:
+        retry_after = _parse_retry_after(err)
+        logger.warning(
+            "%s rate limited after %d retries (retry_after=%s)",
+            kwargs.get("model"), _NUM_RETRIES, retry_after,
+        )
+        raise LLMRateLimited(
+            f"{kwargs.get('model')} is rate limited or out of quota. "
+            "Wait for the limit to reset, or switch EXTRACTOR_MODEL.",
+            retry_after,
+        ) from err
     return resp.choices[0].message.content or ""
 
 

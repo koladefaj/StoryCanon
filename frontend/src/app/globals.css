@@ -204,8 +204,7 @@ html[data-theme="dark"] .theme-icon-sun {
 
 /*
  * Contradiction marks are inert until a continuity check confirms them.
- * `flagged` = open contradiction (red rectangular border around the text,
- *   the words themselves stay their normal color),
+ * `flagged` = open contradiction (red highlight + animated dashed border),
  * `resolved` = decided, kept discoverable with a faint dotted line.
  */
 .manuscript mark.contradiction {
@@ -221,6 +220,8 @@ html[data-theme="dark"] .theme-icon-sun {
   --ant-thickness: 1.5px;
   border-radius: 3px;
   padding: 2px 4px;
+  color: var(--color-flag-red-strong);
+  background-color: color-mix(in srgb, var(--color-flag-red) 16%, transparent);
   background-image:
     linear-gradient(90deg, var(--ant-color) 0 6px, transparent 6px 10px),
     linear-gradient(90deg, var(--ant-color) 0 6px, transparent 6px 10px),
