@@ -371,17 +371,24 @@ export function ManuscriptEditor({
     }
   }, [contradictions, chapter.id, editor]);
 
-  // Marks stay inert until a check confirms them: flagged while unresolved,
-  // dotted once decided. `mark.contradiction` alone renders invisible, so a
-  // missed pass here means no red at all — hence the `editor` dep (see above).
+  // Flagged while unresolved, dotted once decided. `mark.contradiction` alone
+  // renders invisible, so this pass is what makes the red appear.
+  //
+  // A mark is in the saved HTML *because* a contradiction was detected for it, so
+  // it defaults to flagged. Only a positively-known resolution dots it. This is
+  // the fix for red vanishing on reload and on returning to the chapter: the
+  // marks are parsed from HTML before `contradictions` finishes loading, and the
+  // old code, finding no match yet, cleared flagged and left them invisible until
+  // (if ever) the effect happened to re-run with the data present.
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
     el.querySelectorAll("mark.contradiction").forEach((m) => {
       const id = m.getAttribute("data-contradiction-id");
       const c = contradictions.find((x) => x.id === id);
-      m.classList.toggle("flagged", !!c && c.status === "unresolved");
-      m.classList.toggle("resolved", !!c && c.status !== "unresolved");
+      const resolved = !!c && c.status !== "unresolved";
+      m.classList.toggle("resolved", resolved);
+      m.classList.toggle("flagged", !resolved);
     });
   }, [contradictions, chapter.id, editor]);
 
