@@ -36,7 +36,57 @@ async def search_facts(
     threshold: float = 0.4,
     limit: int = 8,
 ) -> list[dict]:
-    """Search canon. `chapter_index_lt` enforces 'earlier chapters are canon'."""
+    """Search curated canon. `chapter_index_lt` enforces 'earlier chapters are canon'."""
+    return await _search_container(
+        q,
+        book_tag(book_id),
+        "curated",
+        chapter_index_lt=chapter_index_lt,
+        threshold=threshold,
+        limit=limit,
+    )
+
+
+async def search_derived(
+    q: str,
+    book_id: str,
+    *,
+    chapter_index_lt: Optional[int] = None,
+    threshold: float = 0.4,
+    limit: int = 4,
+) -> list[dict]:
+    """Search what Supermemory derived from the prose — a second, independent
+    reading of the same manuscript.
+
+    Our extraction is structured but brittle: it names the same man `Elias`,
+    `Elias Reyes` and `Reyes`, and a fact it simply misses is canon we never had.
+    Supermemory's reading resolves references consistently and has higher recall,
+    so it covers exactly those gaps. Derived memories carry the same numeric
+    chapterIndex, so the 'earlier chapters are canon' filter applies identically.
+
+    Evidence, not canon: these carry no entity/attribute (so they are never
+    revision targets) and no verbatim excerpt, and they are deleted and re-derived
+    on every prose sync — so a contradiction against one can only be advisory.
+    """
+    return await _search_container(
+        q,
+        chapters_tag(book_id),
+        "derived",
+        chapter_index_lt=chapter_index_lt,
+        threshold=threshold,
+        limit=limit,
+    )
+
+
+async def _search_container(
+    q: str,
+    tag: str,
+    source: str,
+    *,
+    chapter_index_lt: Optional[int] = None,
+    threshold: float = 0.4,
+    limit: int = 8,
+) -> list[dict]:
     filters = None
     if chapter_index_lt is not None:
         filters = {
@@ -55,7 +105,7 @@ async def search_facts(
     # Re-add when the Story Bible / version-history UI lands.
     kwargs: dict[str, Any] = dict(
         q=q,
-        container_tag=book_tag(book_id),
+        container_tag=tag,
         search_mode="memories",
         threshold=threshold,
         limit=limit,
@@ -75,6 +125,9 @@ async def search_facts(
                 "metadata": r.metadata or {},
                 "similarity": getattr(r, "similarity", None),
                 "context": _context_to_dict(getattr(r, "context", None)),
+                # Which reading of the manuscript this came from. Drives whether a
+                # contradiction against it can be resolved or is advisory only.
+                "source": source,
             }
         )
     return out

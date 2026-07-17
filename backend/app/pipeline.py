@@ -66,19 +66,39 @@ async def _check_against_canon(
     # 1. All searches concurrently. Facts search ≤ current chapter in ONE query:
     # earlier-chapter hits are canon (judged), same-chapter hits are dedupe/revision
     # targets — otherwise every re-check of an edited paragraph re-stores its facts.
+    #
+    # Supermemory's reading of the prose backs our own up, but only where ours is
+    # blind. Our extraction is structured (entity + attribute + a verbatim excerpt
+    # to highlight) but it drops facts and fragments one character into `Elias`,
+    # `Elias Reyes` and `Reyes`; a fact it missed is canon we never had, and no
+    # amount of searching finds it. Supermemory's reading resolves references and
+    # recalls more, and carries the same numeric chapterIndex, so the same
+    # 'earlier chapters are canon' filter applies.
+    #
+    # Fallback, not merge: derived memories are longer and richer, so when both
+    # contain the same fact the derived one wins on similarity and the judge cites
+    # it — and a derived memory has no curated counterpart to version-bump, which
+    # would silently turn a resolvable contradiction into an advisory one. So it
+    # only speaks when curated canon has nothing to say. Searches are local and
+    # free; this costs latency, not tokens.
     async def search_fact(f: Fact) -> list[dict]:
-        return await memory.search_facts(
-            f"{f.entity} {f.attribute}: {f.statement}",
-            book_id,
-            chapter_index_lt=chapter_index + 1,
-        )
+        q = f"{f.entity} {f.attribute}: {f.statement}"
+        hits = await memory.search_facts(q, book_id, chapter_index_lt=chapter_index + 1)
+        if not hits:
+            hits = await memory.search_derived(
+                q, book_id, chapter_index_lt=chapter_index + 1
+            )
+        return hits
 
     async def search_claim(c: Claim) -> list[dict]:
-        hits = await memory.search_facts(
-            f"{c.entity}: {c.presupposedState}", book_id, chapter_index_lt=chapter_index
-        )
-        if not hits:  # fall back to a plain entity search
-            hits = await memory.search_facts(c.entity, book_id, chapter_index_lt=chapter_index)
+        q = f"{c.entity}: {c.presupposedState}"
+        hits = await memory.search_facts(q, book_id, chapter_index_lt=chapter_index)
+        if not hits:
+            hits = await memory.search_derived(q, book_id, chapter_index_lt=chapter_index)
+        if not hits:  # last resort: a plain entity search over curated canon
+            hits = await memory.search_facts(
+                c.entity, book_id, chapter_index_lt=chapter_index
+            )
         return hits
 
     fact_hits, claim_hits = await asyncio.gather(
@@ -327,6 +347,13 @@ async def resolve(book_id: str, req: ResolveRequest) -> ResolveResponse:
     # kept-new → version-bump the conflicting canon memory (flagship feature).
     if not req.oldMemoryId or not req.newFactContent:
         raise ValueError("kept-new requires oldMemoryId and newFactContent")
+    # Belt-and-braces: the card hides "Make canon" for prose-derived memories, but
+    # they live in a different container, so update_memory here would either fail
+    # or write to the wrong place — and the next sync would re-derive over it.
+    if req.oldFactSource == "derived":
+        raise ValueError(
+            "a prose-derived memory can't be made canon — edit the chapter instead"
+        )
     metadata = {
         k: v
         for k, v in {
@@ -489,6 +516,8 @@ def _build_pending(
     old_ref = FactRef(
         chapterId=str(md.get("chapterId", "")),
         chapterTitle=str(md.get("chapterTitle", "")),
+        # Derived memories are restatements, not substrings, so they have no
+        # excerpt — the memory text itself is the most faithful thing to show.
         excerpt=str(md.get("excerpt") or canon["memory"]),
     )
     new_content = obj.statement if kind == "fact" else obj.presupposedState
@@ -510,4 +539,5 @@ def _build_pending(
         chapterIndex=chapter_index,
         reason=reason,
         paragraphIndex=paragraph_index,
+        oldFactSource=canon.get("source") or "curated",  # type: ignore[arg-type]
     )

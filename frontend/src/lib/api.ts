@@ -66,6 +66,8 @@ export type ResolveInput = {
   chapterId?: string;
   chapterIndex?: number;
   chapterTitle?: string;
+  // Echoed so the server can refuse to version-bump a prose-derived memory.
+  oldFactSource?: "curated" | "derived";
 };
 
 export async function resolveContradiction(

@@ -310,6 +310,7 @@ export function Workspace() {
           chapterId: target.newFact.chapterId,
           chapterIndex: target.chapterIndex,
           chapterTitle: target.newFact.chapterTitle,
+          oldFactSource: target.oldFactSource,
         })
           .then(() => bumpCanon()) // version-bump changed canon
           .catch(() => {

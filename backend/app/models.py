@@ -82,6 +82,11 @@ class PendingContradiction(Contradiction):
     # every earlier finding for it, so editing prose can clear a stale flag
     # instead of stacking a second one beside it.
     paragraphIndex: Optional[int] = None
+    # Which reading of the manuscript the challenged memory came from. "derived"
+    # means Supermemory read it out of the prose: it has no verbatim excerpt, and
+    # it is re-derived on every sync, so it cannot be version-bumped — the author
+    # resolves it by fixing the text, not by making it canon.
+    oldFactSource: Literal["curated", "derived"] = "curated"
 
 
 # ---------------------------------------------------------------------------
@@ -121,6 +126,9 @@ class ResolveRequest(BaseModel):
     chapterTitle: Optional[str] = None
     entity: Optional[str] = None
     attribute: Optional[str] = None
+    # Echoed from the contradiction so the server can refuse to version-bump a
+    # prose-derived memory (see PendingContradiction.oldFactSource).
+    oldFactSource: Optional[Literal["curated", "derived"]] = None
 
 
 class ResolveResponse(BaseModel):
