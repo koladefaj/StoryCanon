@@ -11,9 +11,13 @@ import { ContradictionMark } from "@/lib/contradiction-mark";
 import { paragraphCheck } from "@/lib/api";
 
 const TOOLTIP_WIDTH = 288;
-// Debounce before checking the paragraph the cursor is in (BUILD_PLAN §6).
+// Debounce before checking (BUILD_PLAN §6).
 const LIVE_CHECK_DELAY = 1800;
 const MIN_PARAGRAPH_CHARS = 12;
+// Paragraphs checked at once when several are outstanding — pasting a whole
+// chapter is one edit but many unchecked paragraphs. The backend serialises the
+// canon phase per book anyway, so this only parallelises extraction.
+const LIVE_CHECK_CONCURRENCY = 3;
 
 // --- ProseMirror helpers for the live loop --------------------------------
 
@@ -39,6 +43,22 @@ function currentParagraph(editor: Editor): {
       ? doc.child(blockIndex - 1).textContent
       : "";
   return { text, preceding, index: blockIndex };
+}
+
+type Para = { text: string; preceding: string; index: number };
+
+/** Every top-level block, with the index and preceding-sibling text a check needs. */
+function allParagraphs(editor: Editor): Para[] {
+  const doc = editor.state.doc;
+  const out: Para[] = [];
+  doc.forEach((node, _pos, index) => {
+    out.push({
+      text: node.textContent,
+      index,
+      preceding: index > 0 ? doc.child(index - 1).textContent : "",
+    });
+  });
+  return out;
 }
 
 /** Find the first occurrence of `needle` and return its ProseMirror range. */
@@ -133,12 +153,13 @@ export function ManuscriptEditor({
     };
   });
 
-  const runParagraphCheck = useCallback(async () => {
+  const checkOneParagraph = useCallback(async (para: Para) => {
     const editor = editorRef.current;
     if (!editor) return;
-    const { text, preceding, index } = currentParagraph(editor);
-    const trimmed = text.trim();
+    const trimmed = para.text.trim();
     if (trimmed.length < MIN_PARAGRAPH_CHARS) return;
+    // Claimed before awaiting: a second debounce can fire while this is still
+    // in flight, and re-checking the same text would double-charge the model.
     if (checkedParagraphs.current.has(trimmed)) return;
     checkedParagraphs.current.add(trimmed);
 
@@ -149,8 +170,8 @@ export function ManuscriptEditor({
         chapterIndex: p.chapterIndex,
         chapterTitle: p.chapterTitle,
         paragraphText: trimmed,
-        precedingContext: preceding || undefined,
-        paragraphIndex: index,
+        precedingContext: para.preceding || undefined,
+        paragraphIndex: para.index,
       });
       // Facts were stored/updated → canon changed, refresh the Story Bible.
       if (result.facts.length > 0) p.onCanonChanged();
@@ -167,12 +188,45 @@ export function ManuscriptEditor({
       // Only reached on success — a failed check must never clear anything.
       p.onContradictionsDetected(result.contradictions, {
         chapterId: p.chapterId,
-        paragraphIndex: index,
+        paragraphIndex: para.index,
       });
     } catch {
       // Backend offline / transient — stay silent, writing must not be blocked.
+      // Release the claim so a later edit can retry this paragraph.
+      checkedParagraphs.current.delete(trimmed);
     }
   }, []);
+
+  /** Check every outstanding paragraph, not just the cursor's.
+   *
+   * One edit can leave several paragraphs unchecked — pasting a whole chapter is
+   * a single update event, and the cursor lands in the last block, so a
+   * cursor-only check silently skipped everything above it. The set is seeded
+   * with the chapter's existing text on mount, so this only ever covers prose
+   * that was actually written or pasted this session. */
+  const runParagraphCheck = useCallback(async () => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    const cursorIndex = currentParagraph(editor).index;
+    const outstanding = allParagraphs(editor).filter((p) => {
+      const t = p.text.trim();
+      return (
+        t.length >= MIN_PARAGRAPH_CHARS && !checkedParagraphs.current.has(t)
+      );
+    });
+    // The author is watching the paragraph they're in — flag that one first.
+    outstanding.sort(
+      (a, b) =>
+        Number(b.index === cursorIndex) - Number(a.index === cursorIndex),
+    );
+    for (let i = 0; i < outstanding.length; i += LIVE_CHECK_CONCURRENCY) {
+      await Promise.all(
+        outstanding
+          .slice(i, i + LIVE_CHECK_CONCURRENCY)
+          .map((p) => checkOneParagraph(p)),
+      );
+    }
+  }, [checkOneParagraph]);
 
   const scheduleParagraphCheck = useCallback(() => {
     if (liveTimer.current) clearTimeout(liveTimer.current);
@@ -208,7 +262,15 @@ export function ManuscriptEditor({
   useEffect(() => {
     if (!editor) return;
     editorRef.current = editor;
-    checkedParagraphs.current = new Set();
+    // Seed with the prose already on the page: opening a chapter must not
+    // re-check text that's merely being read, only what gets written or pasted
+    // from here on. An edited paragraph's text changes, so it leaves the set on
+    // its own and gets re-checked. The full scan covers everything else.
+    checkedParagraphs.current = new Set(
+      allParagraphs(editor)
+        .map((p) => p.text.trim())
+        .filter((t) => t.length >= MIN_PARAGRAPH_CHARS),
+    );
     onWordCountChange(editor.storage.characterCount.words());
     const onEditorUpdate = () => scheduleParagraphCheck();
     editor.on("update", onEditorUpdate);
