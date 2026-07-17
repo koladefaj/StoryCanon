@@ -216,26 +216,37 @@ async def continuity_check_events(book_id: str):
     """
     yield {"type": "phase", "label": "Reading chapters…"}
     chapters = sorted(await memory.list_chapters(book_id), key=lambda c: c["index"])
-    sem = asyncio.Semaphore(4)  # bound concurrent LLM work (Groq free-tier friendly)
+    # Bound to 2, not for the LLM but for Supermemory's local embedding engine:
+    # each paragraph check fires several similarity searches, and overrunning the
+    # native embedder's 2-concurrent limit is what segfaulted it mid-scan.
+    sem = asyncio.Semaphore(2)
 
     # Hand the raw prose to Supermemory so it can derive its own memories from it,
     # alongside our curated canon. Extraction happens server-side and async, so
     # this only queues the documents — the scan below doesn't wait on it, and a
     # failure here must never block continuity checking.
+    #
+    # Bounded to 2: each sync ships a whole chapter to Supermemory's local
+    # embedding engine, whose own limit is 2 concurrent ingests. Firing all
+    # chapters at once (unbounded gather) flooded the native embedder and
+    # segfaulted it mid-scan — the crash that killed a recording session. A small
+    # cap keeps the engine inside its own comfort zone.
     if chapters:
         yield {"type": "phase", "label": "Supermemory is reading the prose…"}
-        await asyncio.gather(
-            *[
-                memory.sync_chapter_prose(
+        sync_sem = asyncio.Semaphore(2)
+
+        async def sync_one(ch: dict) -> None:
+            async with sync_sem:
+                await memory.sync_chapter_prose(
                     book_id,
                     ch["id"],
                     ch["title"],
                     ch["index"],
                     "\n\n".join(t for _, t in _html_paragraphs(ch["content"])),
                 )
-                for ch in chapters
-            ],
-            return_exceptions=True,
+
+        await asyncio.gather(
+            *[sync_one(ch) for ch in chapters], return_exceptions=True
         )
 
     async def scan_paragraph(ch: dict, text: str, preceding: str | None, index: int):
