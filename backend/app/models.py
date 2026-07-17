@@ -175,6 +175,26 @@ class CanonVersion(BaseModel):
     updatedAt: Optional[str] = None
 
 
+class MemoryMeta(BaseModel):
+    """Supermemory's own bookkeeping, passed through verbatim.
+
+    The Story Bible is a view of the memory layer, not a panel we drew beside
+    it — surfacing these lets an author (or a judge) audit exactly what
+    Supermemory is holding and why.
+    """
+
+    memoryId: str
+    containerTag: str
+    version: Optional[int] = None
+    isLatest: Optional[bool] = None
+    # Every version of a fact shares the root id — this is what makes the
+    # version chain a chain rather than unrelated rows.
+    rootMemoryId: Optional[str] = None
+    createdAt: str = ""
+    updatedAt: str = ""
+    sourceCount: Optional[int] = None
+
+
 class CanonEntry(BaseModel):
     id: str
     content: str
@@ -186,6 +206,7 @@ class CanonEntry(BaseModel):
     version: Optional[int] = None
     # Older versions, newest first (empty until a memory has been updated).
     history: list[CanonVersion] = Field(default_factory=list)
+    raw: Optional[MemoryMeta] = None
 
 
 class CanonResponse(BaseModel):

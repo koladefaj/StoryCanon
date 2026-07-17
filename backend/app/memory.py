@@ -126,14 +126,35 @@ async def forget(book_id: str, memory_id: str, reason: str) -> None:
     )
 
 
+# /v4/memories/list paginates and defaults to 10 per page. Passing no limit
+# silently truncated every caller to the first 10 memories: the Story Bible
+# under-reported canon, the relationship graph was built from a slice of it, and
+# deleting a chapter or book left everything past the 10th orphaned rather than
+# forgotten. Page through instead of trusting one response.
+_LIST_PAGE_SIZE = 100
+
+
 async def list_memories(book_id: str) -> list[dict]:
-    """Story Bible source: latest entries with update history (raw POST)."""
-    resp = await client.post(
-        "/v4/memories/list",
-        body={"containerTags": [book_tag(book_id)]},
-        cast_to=httpx.Response,
-    )
-    return resp.json().get("memoryEntries", [])
+    """Story Bible source: every entry for the book, with update history."""
+    out: list[dict] = []
+    page = 1
+    while True:
+        resp = await client.post(
+            "/v4/memories/list",
+            body={
+                "containerTags": [book_tag(book_id)],
+                "limit": _LIST_PAGE_SIZE,
+                "page": page,
+            },
+            cast_to=httpx.Response,
+        )
+        data = resp.json()
+        out.extend(data.get("memoryEntries", []))
+        pagination = data.get("pagination") or {}
+        total_pages = pagination.get("totalPages") or 1
+        if page >= total_pages:
+            return out
+        page += 1
 
 
 # --- Book & chapter PROSE stored in a local JSON library ---------------------
@@ -246,9 +267,16 @@ async def list_chapters(book_id: str) -> list[dict]:
 # --- Deletion ----------------------------------------------------------------
 
 
-async def _forget_memories(book_id: str, entries: list[dict]) -> None:
+async def _forget_memories(book_id: str, entries: list[dict], reason: str) -> None:
+    """Forget with a reason that survives as an audit trail.
+
+    Supermemory keeps a forgotten memory as a tombstone carrying `forgetReason`,
+    so "why isn't this canon any more?" is answerable months later. A generic
+    "deleted" throws that away — the reason should name what the author actually
+    did to the manuscript.
+    """
     await asyncio.gather(
-        *[forget(book_id, e["id"], "deleted") for e in entries if e.get("id")],
+        *[forget(book_id, e["id"], reason) for e in entries if e.get("id")],
         return_exceptions=True,
     )
 
@@ -256,25 +284,35 @@ async def _forget_memories(book_id: str, entries: list[dict]) -> None:
 async def delete_chapter(book_id: str, chapter_id: str) -> None:
     """Remove a chapter's prose and forget the canon facts it established, so a
     deleted chapter can't keep flagging (or being flagged by) other chapters."""
+    title = ""
     async with _library_lock:
         data = _read_library()
         book = data["books"].get(book_id)
         if book and chapter_id in book.get("chapters", {}):
+            title = book["chapters"][chapter_id].get("title") or ""
             del book["chapters"][chapter_id]
             _write_library(data)
     entries = await list_memories(book_id)
+    where = f'"{title}"' if title else chapter_id
     await _forget_memories(
         book_id,
         [e for e in entries
          if str((e.get("metadata") or {}).get("chapterId") or "") == chapter_id],
+        f"Chapter {where} was cut in revision",
     )
 
 
 async def delete_book(book_id: str) -> None:
     """Remove a book entirely: its prose from the library and all its canon facts."""
+    title = ""
     async with _library_lock:
         data = _read_library()
         if book_id in data["books"]:
+            title = data["books"][book_id].get("title") or ""
             del data["books"][book_id]
             _write_library(data)
-    await _forget_memories(book_id, await list_memories(book_id))
+    await _forget_memories(
+        book_id,
+        await list_memories(book_id),
+        f'Book "{title or book_id}" was deleted',
+    )

@@ -24,6 +24,7 @@ from .models import (
     ContradictionsPayload,
     ForgetRequest,
     GraphResponse,
+    MemoryMeta,
     ParagraphCheckRequest,
     ParagraphCheckResponse,
     ResolveRequest,
@@ -147,8 +148,15 @@ async def continuity_check_stream(book_id: str) -> StreamingResponse:
 
 @app.get("/api/books/{book_id}/canon", response_model=CanonResponse)
 async def get_canon(book_id: str) -> CanonResponse:
-    """Story Bible: latest canon entries with their version history."""
+    """Story Bible: latest canon entries with their version history.
+
+    Superseded versions are excluded — they belong to their successor's
+    `history`, not beside it as separate entries. Forgotten memories never come
+    back from the list endpoint at all (verified on 0.0.5, with and without
+    `include.forgottenMemories`), so the filter here is belt-and-braces.
+    """
     raw = await memory.list_memories(book_id)
+    container = memory.book_tag(book_id)
     entries: list[CanonEntry] = []
     for e in raw:
         if e.get("isForgotten") or e.get("isLatest") is False:
@@ -177,6 +185,16 @@ async def get_canon(book_id: str) -> CanonResponse:
                     for h in (e.get("history") or [])
                     if isinstance(h, dict)
                 ],
+                raw=MemoryMeta(
+                    memoryId=str(e.get("id") or ""),
+                    containerTag=container,
+                    version=e.get("version"),
+                    isLatest=e.get("isLatest"),
+                    rootMemoryId=(e.get("rootMemoryId") or None),
+                    createdAt=str(e.get("createdAt") or ""),
+                    updatedAt=str(e.get("updatedAt") or ""),
+                    sourceCount=e.get("sourceCount"),
+                ),
             )
         )
     entries.sort(key=lambda x: (x.entity.lower(), x.chapterIndex or 0, x.attribute))

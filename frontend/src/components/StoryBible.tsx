@@ -15,6 +15,9 @@ export function StoryBible({
   const [failed, setFailed] = useState(false);
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [reason, setReason] = useState("");
+  // Audit view: Supermemory's own fields, plus the tombstones of forgotten
+  // facts. The Story Bible is a view of the memory layer — this is the proof.
+  const [audit, setAudit] = useState(false);
 
   // Bumped to re-fetch (e.g. reconciling after a failed forget).
   const [reloadNonce, setReloadNonce] = useState(0);
@@ -53,7 +56,9 @@ export function StoryBible({
     const r = reason.trim() || "Removed from canon by the author";
     setConfirmId(null);
     setReason("");
-    // Optimistic removal; reload to reconcile if the call fails.
+    // Optimistic removal; reload to reconcile if the call fails. The reason is
+    // stored on the memory, but 0.0.5 never returns a forgotten memory from the
+    // list endpoint, so there is no tombstone to render here.
     setEntries((prev) => (prev ?? []).filter((e) => e.id !== id));
     forgetMemory(bookId, id, r).catch(() => setReloadNonce((n) => n + 1));
   };
@@ -82,8 +87,28 @@ export function StoryBible({
   }
 
   return (
-    <div className="divide-y divide-border-soft">
-      {groups.map(([entity, list]) => (
+    <div>
+      <div className="flex items-center justify-between border-b border-border-soft px-5 py-2.5">
+        <p className="text-[11px] text-ink-faint">
+          {entries.length} {entries.length === 1 ? "memory" : "memories"} in
+          Supermemory
+        </p>
+        <button
+          type="button"
+          onClick={() => setAudit((v) => !v)}
+          aria-pressed={audit}
+          title="Show Supermemory's raw memory records"
+          className={`cursor-pointer rounded px-1.5 py-0.5 text-[11px] font-medium transition-colors ${
+            audit
+              ? "bg-ink text-paper"
+              : "text-ink-faint hover:bg-paper-sunken hover:text-ink"
+          }`}
+        >
+          Audit
+        </button>
+      </div>
+      <div className="divide-y divide-border-soft">
+        {groups.map(([entity, list]) => (
         <div key={entity} className="px-5 py-4">
           <p className="text-[13px] font-medium text-ink">{entity}</p>
           <div className="mt-2 space-y-3">
@@ -114,6 +139,38 @@ export function StoryBible({
                           </p>
                         ))}
                       </div>
+                    )}
+                    {audit && e.raw && (
+                      <dl className="mt-1.5 grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 rounded-md bg-paper-sunken px-2 py-1.5 font-mono text-[10px] leading-relaxed text-ink-faint">
+                        <dt>memory</dt>
+                        <dd className="truncate text-ink-soft">
+                          {e.raw.memoryId}
+                        </dd>
+                        <dt>container</dt>
+                        <dd className="truncate text-ink-soft">
+                          {e.raw.containerTag}
+                        </dd>
+                        <dt>version</dt>
+                        <dd className="text-ink-soft">
+                          v{e.raw.version ?? 1}
+                          {e.raw.isLatest ? " · latest" : ""}
+                        </dd>
+                        {/* Differs from memoryId once a fact has been superseded
+                            — this is the link that makes the chain a chain. */}
+                        {e.raw.rootMemoryId &&
+                          e.raw.rootMemoryId !== e.raw.memoryId && (
+                            <>
+                              <dt>root</dt>
+                              <dd className="truncate text-ink-soft">
+                                {e.raw.rootMemoryId}
+                              </dd>
+                            </>
+                          )}
+                        <dt>updated</dt>
+                        <dd className="truncate text-ink-soft">
+                          {e.raw.updatedAt}
+                        </dd>
+                      </dl>
                     )}
                   </div>
                   <button
@@ -173,7 +230,8 @@ export function StoryBible({
             ))}
           </div>
         </div>
-      ))}
+        ))}
+      </div>
     </div>
   );
 }

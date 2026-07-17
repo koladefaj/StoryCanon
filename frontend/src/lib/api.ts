@@ -216,6 +216,19 @@ export type CanonVersion = {
   updatedAt?: string | null;
 };
 
+/** Supermemory's own bookkeeping for one memory, passed through verbatim. */
+export type MemoryMeta = {
+  memoryId: string;
+  containerTag: string;
+  version?: number | null;
+  isLatest?: boolean | null;
+  // Every version of a fact shares this — it's what links a version chain.
+  rootMemoryId?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  sourceCount?: number | null;
+};
+
 export type CanonEntry = {
   id: string;
   content: string;
@@ -226,6 +239,7 @@ export type CanonEntry = {
   updatedAt: string;
   version?: number | null;
   history: CanonVersion[];
+  raw?: MemoryMeta | null;
 };
 
 export async function getCanon(
