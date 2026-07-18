@@ -159,8 +159,9 @@ shared data volume on first boot, so there's no key to copy by hand. Give
 Supermemory ~60s on first run to unpack its embedding model.
 
 **Try it:** open the editor, paste a few chapters, and hit **Check Continuity**.
-Canon builds as it reads; contradictions light up red. (`DEMO.md` has a ready-made
-four-chapter manuscript and the exact errors it catches.)
+Canon builds as it reads; contradictions light up red. Write a character a
+wheelchair in chapter one, then have them run in chapter four, and watch the line
+flag itself.
 
 ---
 
@@ -192,8 +193,6 @@ providers:
 ├── frontend/             # Next.js editor, Story Bible, Cast, landing page
 │   └── src/components/   #   ManuscriptEditor, StoryBible, Cast, ContinuityPanel
 ├── docker-compose.yml    # supermemory + backend + frontend
-├── DEMO.md               # demo script + sample manuscript
-├── ISSUES.md             # upstream Supermemory bugs found while building
 └── .env.example          # Supermemory provider key
 ```
 
@@ -219,10 +218,12 @@ providers:
 
 ## Known limitations
 
-Honest, and mostly upstream. See [`ISSUES.md`](ISSUES.md) for four documented
-Supermemory Local bugs found while building (a native segfault under concurrent
-embedding load, a Workers-only reranker, a silent list-pagination default, and
-unretrievable forgotten memories) — each with repro and evidence.
+Honest, and mostly upstream. While building we hit four bugs in Supermemory Local
+itself — a native segfault under concurrent embedding load, a Workers-only
+reranker that throws when self-hosted, a silent list-pagination default (10), and
+forgotten memories that can't be read back — each reported separately with repro
+and evidence. StoryCanon works around them (bounded concurrency, no rerank,
+explicit pagination, hard-delete semantics for forget).
 
 Product-side: extraction is non-deterministic, so a given run may miss one of the
 subtler contradictions; entity fragmentation in curated canon can split one
