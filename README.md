@@ -2,7 +2,7 @@
 
 **A manuscript editor that catches continuity errors while you write — and remembers your whole story, locally, on Supermemory.**
 
-![StoryCanon — write the story, it remembers the canon](readme.png)
+![StoryCanon — write the story, it remembers the canon](assets/readme.png)
 
 > Built for the **Supermemory Local Hackathon**. Everything — memory, embeddings,
 > search, extraction — runs on your machine. No account, no cloud store.
@@ -76,40 +76,7 @@ to underline; Supermemory's actually knows who everyone is.
 
 ## Architecture
 
-```mermaid
-flowchart TB
-    subgraph browser["Browser · localhost:3000 (Next.js + TipTap)"]
-        editor["Manuscript editor<br/>writes + inline red flags"]
-        bible["Story Bible · Cast<br/>canon, version history, relationships"]
-    end
-
-    subgraph backend["FastAPI backend · localhost:8000"]
-        extract["1 · Extract<br/>facts + claims (LLM)"]
-        judge["3 · Judge<br/>contradiction? (LLM)"]
-        store["4 · Store / version-bump"]
-    end
-
-    subgraph sm["Supermemory Local · localhost:6767"]
-        curated[("Curated canon<br/>per-book container")]
-        derived[("Prose-derived<br/>per-book :chapters")]
-        emb["local embeddings<br/>bge-base-en-v1.5"]
-    end
-
-    library[["library.json<br/>chapter prose"]]
-
-    editor -- "paragraph, on pause" --> extract
-    extract -- "2 · search, earlier<br/>chapters only (numeric filter)" --> curated
-    curated -. "fallback when<br/>curated is blind" .-> derived
-    extract --> judge
-    judge -- "contradiction" --> editor
-    judge -- "consistent / new fact" --> store
-    store --> curated
-    editor -- "full scan hands over raw prose" --> derived
-    curated --- emb
-    derived --- emb
-    editor --- library
-    bible --> curated
-```
+![StoryCanon architecture](assets/architecture.png)
 
 **The live loop** (per paragraph, as you type): extract facts + claims → search
 canon filtered to earlier chapters → judge each against its canon → store new facts
