@@ -38,4 +38,8 @@ export type Contradiction = {
   reason?: string;
   // Which paragraph produced this; a re-check of that paragraph supersedes it.
   paragraphIndex?: number | null;
+  // Where the challenged memory came from. "derived" = Supermemory read it out of
+  // the prose itself; it's re-derived on every sync and can't be version-bumped,
+  // so the author resolves it by fixing the text rather than making it canon.
+  oldFactSource?: "curated" | "derived";
 };

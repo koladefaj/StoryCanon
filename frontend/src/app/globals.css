@@ -203,16 +203,15 @@ html[data-theme="dark"] .theme-icon-sun {
 }
 
 /*
- * Contradiction marks are inert until a continuity check confirms them.
- * `flagged` = open contradiction (red highlight + animated dashed border),
- * `resolved` = decided, kept discoverable with a faint dotted line.
+ * A `mark.contradiction` only ever exists in the document because a check
+ * confirmed a contradiction for it, so it is RED BY DEFAULT — the instant TipTap
+ * paints it from the saved HTML, with no JS class toggle required. This was the
+ * fix for red never appearing: the old styling keyed off a `flagged` class added
+ * by an effect that raced TipTap's render and usually lost, leaving marks
+ * transparent. `resolved` (added once the author decides) overrides back to a
+ * quiet dotted underline.
  */
-.manuscript mark.contradiction {
-  background: transparent;
-  color: inherit;
-}
-
-.manuscript mark.contradiction.flagged {
+.manuscript mark.contradiction:not(.resolved) {
   /* "Marching ants": the red border is drawn as four tiled gradient strips
      (top, bottom, left, right) whose dash pattern is animated clockwise —
      a real border can't move, background tiles can. 6px dash / 4px gap. */
@@ -250,15 +249,15 @@ html[data-theme="dark"] .theme-icon-sun {
   }
 }
 
-.manuscript mark.contradiction.flagged:hover,
-.manuscript mark.contradiction.flagged.active {
+.manuscript mark.contradiction:not(.resolved):hover,
+.manuscript mark.contradiction:not(.resolved).active {
   --ant-color: var(--color-flag-red-strong);
   --ant-thickness: 2px;
   animation-duration: 0.5s;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .manuscript mark.contradiction.flagged {
+  .manuscript mark.contradiction:not(.resolved) {
     animation: none;
     background-image: none;
     border: var(--ant-thickness) solid var(--ant-color);

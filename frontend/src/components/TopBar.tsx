@@ -6,7 +6,7 @@ import { ThemeToggle } from "./ThemeToggle";
 import type { Book } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-type SaveState = "saved" | "saving";
+type SaveState = "saved" | "saving" | "offline";
 
 function IconButton({
   onClick,
@@ -246,9 +246,19 @@ export function TopBar({
       </div>
 
       <div className="flex items-center gap-3">
-        <span className="text-xs text-ink-faint">
-          {saveState === "saving" ? "Saving…" : "Saved"}
-        </span>
+        {saveState === "offline" ? (
+          <span
+            className="flex items-center gap-1.5 text-xs font-medium text-flag"
+            title="Can't reach the backend — your latest edits aren't saved and a refresh will lose them."
+          >
+            <span className="h-1.5 w-1.5 rounded-full bg-flag" />
+            Not saved — backend offline
+          </span>
+        ) : (
+          <span className="text-xs text-ink-faint">
+            {saveState === "saving" ? "Saving…" : "Saved"}
+          </span>
+        )}
 
         {unresolvedCount > 0 && !checking && (
           <span className="text-xs font-medium text-flag">

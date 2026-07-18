@@ -50,6 +50,9 @@ export function FactCard({
 }) {
   const { id, entity, oldFact, newFact, status, newFactContent } = contradiction;
   const resolved = status !== "unresolved";
+  // Supermemory read this one out of the prose. It's re-derived on every sync, so
+  // version-bumping it would be wiped — the author fixes the text instead.
+  const fromProse = contradiction.oldFactSource === "derived";
 
   return (
     <div
@@ -80,7 +83,7 @@ export function FactCard({
 
       <div className="mt-2.5 space-y-2.5">
         <FactRow
-          label="Established"
+          label={fromProse ? "Supermemory read" : "Established"}
           chapterTitle={oldFact.chapterTitle}
           excerpt={oldFact.excerpt}
           tone="old"
@@ -118,15 +121,20 @@ export function FactCard({
               onClick={() => onResolve(id, "kept-old")}
               className="flex-1 cursor-pointer rounded-md border border-border px-2 py-1.5 text-xs font-medium text-ink-soft transition-colors hover:bg-ink/5 hover:text-ink"
             >
-              Keep original
+              {fromProse ? "Dismiss" : "Keep original"}
             </button>
-            <button
-              type="button"
-              onClick={() => onResolve(id, "kept-new")}
-              className="flex-1 cursor-pointer rounded-md bg-ink px-2 py-1.5 text-xs font-medium text-paper transition-colors hover:bg-ink/85"
-            >
-              Make canon
-            </button>
+            {/* No "Make canon" for a prose-derived memory: it has no curated
+                counterpart to version-bump, and the next sync re-derives it from
+                the chapter anyway — so the fix is to edit the text. */}
+            {!fromProse && (
+              <button
+                type="button"
+                onClick={() => onResolve(id, "kept-new")}
+                className="flex-1 cursor-pointer rounded-md bg-ink px-2 py-1.5 text-xs font-medium text-paper transition-colors hover:bg-ink/85"
+              >
+                Make canon
+              </button>
+            )}
           </div>
         ) : (
           <button

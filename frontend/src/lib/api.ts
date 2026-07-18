@@ -66,6 +66,8 @@ export type ResolveInput = {
   chapterId?: string;
   chapterIndex?: number;
   chapterTitle?: string;
+  // Echoed so the server can refuse to version-bump a prose-derived memory.
+  oldFactSource?: "curated" | "derived";
 };
 
 export async function resolveContradiction(
@@ -216,6 +218,19 @@ export type CanonVersion = {
   updatedAt?: string | null;
 };
 
+/** Supermemory's own bookkeeping for one memory, passed through verbatim. */
+export type MemoryMeta = {
+  memoryId: string;
+  containerTag: string;
+  version?: number | null;
+  isLatest?: boolean | null;
+  // Every version of a fact shares this — it's what links a version chain.
+  rootMemoryId?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  sourceCount?: number | null;
+};
+
 export type CanonEntry = {
   id: string;
   content: string;
@@ -226,6 +241,7 @@ export type CanonEntry = {
   updatedAt: string;
   version?: number | null;
   history: CanonVersion[];
+  raw?: MemoryMeta | null;
 };
 
 export async function getCanon(
@@ -235,6 +251,27 @@ export async function getCanon(
     `${API_BASE}/api/books/${encodeURIComponent(bookId)}/canon`,
   );
   if (!res.ok) throw new Error(`getCanon failed: ${res.status}`);
+  return res.json();
+}
+
+/** A memory Supermemory derived from the prose — no entity/attribute, because
+ *  nothing told it what a character is. It read the chapter and decided. */
+export type DerivedMemory = {
+  id: string;
+  content: string;
+  chapterTitle: string;
+  chapterIndex?: number | null;
+  updatedAt: string;
+  raw?: MemoryMeta | null;
+};
+
+export async function getDerived(
+  bookId: string,
+): Promise<{ memories: DerivedMemory[]; ready: boolean }> {
+  const res = await fetch(
+    `${API_BASE}/api/books/${encodeURIComponent(bookId)}/derived`,
+  );
+  if (!res.ok) throw new Error(`getDerived failed: ${res.status}`);
   return res.json();
 }
 

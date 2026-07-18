@@ -60,7 +60,12 @@ export function Workspace() {
   const [activeContradictionId, setActiveContradictionId] = useState<
     string | null
   >(null);
-  const [saveState, setSaveState] = useState<"saved" | "saving">("saved");
+  // "offline" is a real signal, not cosmetic: a failed durable save means the
+  // text only lives in React state and a refresh loses it. Silently swallowing
+  // that is exactly how a dead backend looks identical to a healthy one.
+  const [saveState, setSaveState] = useState<"saved" | "saving" | "offline">(
+    "saved",
+  );
   const [checking, setChecking] = useState(false);
   const [checkPhase, setCheckPhase] = useState<string | null>(null);
   const [showSidebar, setShowSidebar] = useState(true);
@@ -99,9 +104,13 @@ export function Workspace() {
           title: chapter.title,
           content: chapter.content,
           index: chapter.index,
-        }).catch(() => {
-          // Offline / transient — session state still holds the text.
-        });
+        })
+          .then(() => setSaveState((s) => (s === "offline" ? "saved" : s)))
+          .catch(() => {
+            // The durable save failed — the text is only in React state now, so
+            // surface it instead of pretending it's saved.
+            setSaveState("offline");
+          });
         // 3s: each save re-queues Supermemory document processing, so don't
         // fire one on every brief typing pause.
       }, 3000);
@@ -310,6 +319,7 @@ export function Workspace() {
           chapterId: target.newFact.chapterId,
           chapterIndex: target.chapterIndex,
           chapterTitle: target.newFact.chapterTitle,
+          oldFactSource: target.oldFactSource,
         })
           .then(() => bumpCanon()) // version-bump changed canon
           .catch(() => {
