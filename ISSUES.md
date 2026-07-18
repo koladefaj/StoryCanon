@@ -51,15 +51,39 @@ stays up; excess load waits rather than crashing the process.
 ### Actual
 Native segfault on the main thread; server dies.
 
+Full crash block from the server log:
+
 ```
+  + local embeddings  1 worker ready · native backend · 59s
+[ingest] memory limit 1.0 GB above baseline (1.8 GB) · 2 concurrent — set SUPERMEMORY_EMBEDDING_RAM_LIMIT=ngb to change
+  * embeddings
+  + embeddings  local · Xenova/bge-base-en-v1.5 · 768d · 86ms
 [ingest] memory limit 1.0 GB above baseline (1.8 GB) · 2 concurrent
+
+CPU: sse42 popcnt avx avx2
+Args: "/root/.supermemory/bin/supermemory-server"
+Features: Bun.stderr(2) Bun.stdin(2) Bun.stdout(2) abort_signal(79) fetch(38) http_server jsc standalone_executable workers_spawned napi_module_register process_dlopen(2)
+Elapsed: 2775829ms | User: 239971ms | Sys: 98682ms
+RSS: 0.02ZB | Peak: 1.89GB | Commit: 0.02ZB | Faults: 1 | Machine: 8.13GB
+
 panic(main thread): Segmentation fault at address 0x755A46505845
 oh no: Bun has crashed. This indicates a bug in Bun, not your code.
-https://bun.report/1.3.4/l_15eb2145kwGuhooCkyo8vE+kgP__________________A2016BqkshqmC
+
+To send a redacted crash report to Bun's team,
+please file a GitHub issue using the link below:
+
+ https://bun.report/1.3.4/l_15eb2145kwGuhooCkyo8vE+kgP__________________A2016BqkshqmC
 ```
 
-Peak memory at crash was ~1.9 GB of 8 GB available, so this is **not** an OOM —
-it is a memory-safety fault in the native embedding path under concurrency.
+Notes on the crash block:
+- `napi_module_register` + `process_dlopen` + `workers_spawned` in Features
+  confirm the embedding engine is a **native (NAPI/dlopen) module** — the segfault
+  is in native code, not managed JS (a JS bug would throw, not panic).
+- `Peak: 1.89GB` of `Machine: 8.13GB` → **not an OOM**; it's a memory-safety fault
+  under concurrency. (`RSS`/`Commit` reading `0.02ZB` are garbage values printed
+  by the crashed accounting, themselves a symptom of the corruption.)
+- The `bun.report` URL is the runtime's own crash-reporter link, further
+  indicating the fault is in the Bun runtime the server is built on.
 
 ### Impact
 Any client that parallelises ingestion + search (a reasonable pattern) can crash
